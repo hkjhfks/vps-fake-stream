@@ -1,510 +1,184 @@
-# Vercel 假流式代理
+# vps-fake-stream
 
-这是一个部署在 Vercel 上的假流式代理，可以将非流式的 OpenAI Chat Completions 响应转换为流式格式。
+一个部署在 VPS 上的 Node.js 代理服务，用来把上游一次性返回的 Chat Completion 结果改造成伪流式 SSE。
 
-## 📋 功能特性
+它适合这种场景：
 
-- 🚀 将非流式 API 转换为流式响应  
-- 📡 支持 Server-Sent Events (SSE)
-- 🔄 兼容 OpenAI API 格式
-- ⚡ 部署在 Vercel 上，响应快速
-- 🔧 支持自定义源 API 地址
-- 💓 心跳包机制（默认每 3 秒），防止长请求超时
-- 🛡️ 完善的错误处理和 CORS 支持
+- 你希望对接 OpenAI 风格接口
+- 上游只返回非流式结果，前端却想消费流式输出
+- 你不想每次改配置都去改环境变量再重启服务
+- 你需要一个简单的网页来改配置、看日志和检查服务状态
 
-## 🎯 工作原理
+## 功能概览
 
-1. 接收客户端的流式请求
-2. 向源 API 发送非流式请求（同时发送心跳包保持连接）
-3. 将完整响应分解为多个 chunk
-4. 通过 SSE 逐个发送 chunk 给客户端
-5. 模拟真实的流式响应体验
+- 兼容接口：
+  - `POST /v1/chat/completions`
+  - `GET /v1/models`
+- 配置文件热读取：
+  - 配置存放在 `config/config.json`
+  - 修改后无需重启进程
+- 管理登录：
+  - `ADMIN_PASSWORD` 保护配置页、日志页和管理 API
+  - 登录后使用 HttpOnly Cookie 保持会话
+- 内置页面：
+  - `/` 测试请求
+  - `/admin.html` 管理登录
+  - `/config.html` 配置中心
+  - `/logs.html` 请求日志
+- 请求日志：
+  - 记录请求元信息、输出内容、token 用量、响应时间
+  - 不记录输入文本
 
-## 🚀 部署到 Vercel
-
-### 方法一：通过 Vercel 网站部署（推荐）
-
-#### 1. 准备工作
-- 注册 [Vercel 账号](https://vercel.com)
-- 获取 [OpenAI API 密钥](https://platform.openai.com/api-keys)
-
-#### 2. 部署步骤
-
-**步骤 1：导入项目**
-1. 访问 [vercel.com](https://vercel.com)
-2. 点击 "New Project"
-3. 选择 "Import Git Repository" 或直接拖拽项目文件夹
-4. 如果使用 GitHub，先将代码推送到 GitHub 仓库
-
-**步骤 2：配置项目**
-1. 项目名称：输入如 `my-fake-stream-proxy`
-2. Framework Preset：选择 "Other"
-3. Root Directory：保持默认
-
-**步骤 3：设置环境变量**
-在部署前，点击 "Environment Variables" 添加：
-```
-OPENAI_API_KEY = sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-SOURCE_API_URL = https://api.openai.com (可选)
-ALLOW_ENV_API_KEY = false (可选，默认 false)
-```
-
-**步骤 4：部署**
-1. 点击 "Deploy"
-2. 等待 2-3 分钟完成部署
-3. 获得类似 `https://your-project-name.vercel.app` 的 URL
-
-### 方法二：使用 Vercel CLI
-
-#### 1. 安装 CLI
-```bash
-npm install -g vercel
-```
-
-#### 2. 登录并部署
-```bash
-# 登录 Vercel
-vercel login
-
-# 在项目根目录运行部署
-vercel
-
-# 按提示回答问题：
-# - Set up and deploy? Y
-# - Which scope? 选择你的账号  
-# - Link to existing project? N
-# - Project name? my-fake-stream-proxy
-# - Directory? ./
-```
-
-#### 3. 设置环境变量
-```bash
-# 添加 OpenAI API 密钥
-vercel env add OPENAI_API_KEY
-# 输入你的密钥：sk-xxxxxxxxxxxxxxxx
-
-# 添加源 API URL（可选）
-vercel env add SOURCE_API_URL  
-# 输入：https://api.openai.com
-```
-
-#### 4. 重新部署
-```bash
-vercel --prod
-```
-
-## 🧪 本地测试
-
-在部署前，你可以在本地测试：
+## 快速开始
 
 ### 1. 安装依赖
+
 ```bash
 npm install
 ```
 
-### 2. 配置环境变量
-复制 `.env.example` 为 `.env.local`：
-```bash
-cp .env.example .env.local
-```
-
-编辑 `.env.local`：
-```
-OPENAI_API_KEY=your_openai_api_key_here
-SOURCE_API_URL=https://api.openai.com
-# CORS_ALLOW_ORIGIN=*
-# ALLOW_ENV_API_KEY=false
-# HEARTBEAT_INTERVAL_MS=3000
-# CHUNK_TARGET_LENGTH=30
-# CHUNK_DELAY_MS=35
-# DEBUG=0
-```
-
-### 3. 启动本地开发（Vercel CLI）
-```bash
-npx vercel dev
-# 或
-npm run dev
-```
-
-### 4. 访问测试页面
-打开浏览器访问：`http://localhost:3000`
-
-## 📖 使用方法
-
-### 1. 基本用法
-
-部署完成后，你会得到一个 Vercel URL，例如：`https://your-project.vercel.app`
-
-#### 流式请求
-```bash
-curl -X POST https://your-project.vercel.app/api/chat \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "你好！"}],
-    "stream": true
-  }'
-```
-
-#### 非流式请求
-```bash
-curl -X POST https://your-project.vercel.app/api/chat \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{
-    "model": "gpt-4o-mini", 
-    "messages": [{"role": "user", "content": "你好！"}],
-    "stream": false
-  }'
-```
-
-### 2. 在客户端代码中使用
-
-#### Python 示例
-```python
-import openai
-
-# 配置使用你的代理
-openai.api_base = "https://your-project.vercel.app/v1"
-openai.api_key = "your-api-key"
-
-# 流式请求
-response = openai.ChatCompletion.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "你好！"}],
-    stream=True
-)
-
-for chunk in response:
-    content = chunk.choices[0].delta.get('content', '')
-    if content:
-        print(content, end='', flush=True)
-```
-
-#### JavaScript 示例
-```javascript
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: 'your-api-key',
-  baseURL: 'https://your-project.vercel.app/v1',
-});
-
-const stream = await openai.chat.completions.create({
-  model: 'gpt-4o-mini',
-  messages: [{ role: 'user', content: '你好！' }],
-  stream: true,
-});
-
-for await (const chunk of stream) {
-  const content = chunk.choices[0]?.delta?.content || '';
-  if (content) {
-    process.stdout.write(content);
-  }
-}
-```
-
-#### 前端 JavaScript (fetch API)
-```javascript
-const response = await fetch('https://your-project.vercel.app/api/chat', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer your-api-key',
-  },
-  body: JSON.stringify({
-    model: 'gpt-4o-mini',
-    messages: [{ role: 'user', content: '你好！' }],
-    stream: true,
-  }),
-});
-
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-
-  const chunk = decoder.decode(value);
-  const lines = chunk.split('\n');
-
-  for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      const data = line.slice(6);
-      if (data === '[DONE]') break;
-      
-      try {
-        const parsed = JSON.parse(data);
-        const content = parsed.choices?.[0]?.delta?.content || '';
-        if (content) {
-          console.log(content);
-        }
-      } catch (e) {
-        // 忽略解析错误
-      }
-    }
-  }
-}
-```
-
-### 3. 测试页面
-
-部署后访问你的 Vercel URL 根路径（如：`https://your-project.vercel.app`），会看到一个内置的测试页面，可以：
-
-- 输入 API 密钥
-- 选择模型（可点击“加载模型”从 `/v1/models` 自动填充）
-- 测试流式和非流式响应
-- 查看实时响应效果
-
-### 4. 状态检查
-
-访问 `/api/status` 端点检查服务状态：
-```bash
-curl https://your-project.vercel.app/api/status
-```
-
-### 5. 获取模型列表（OpenAI 格式）
-
-- 兼容路径：`/v1/models`（已在 vercel.json 重写到 `/api/models`）
-- 方法：GET（需携带 Authorization 头）
-
-示例：
+### 2. 启动服务
 
 ```bash
-curl -X GET https://your-project.vercel.app/v1/models \
-  -H "Authorization: Bearer your-api-key"
+npm run start
 ```
 
-返回（示例）：
+默认监听 `3000` 端口，也可以这样改：
+
+```bash
+PORT=8080 npm run start
+```
+
+### 3. 初始化管理员密码
+
+第一次启动后，先编辑 `config/config.json`，至少设置：
 
 ```json
 {
-  "object": "list",
-  "data": [
-    { "id": "gpt-4o-mini", "object": "model" },
-    { "id": "gemini-2.5-pro-preview-03-25", "object": "model" }
-  ]
+  "ADMIN_PASSWORD": "your-strong-password"
 }
 ```
 
-状态检查返回示例：
-```json
-{
-  "status": "ok",
-  "message": "假流式代理服务正常运行",
-  "timestamp": "2025-07-31T10:30:00.000Z",
-  "version": "1.0.0",
-  "features": {
-    "streaming": true,
-    "non_streaming": true,
-    "cors": true
-  },
-  "environment": {
-    "has_api_key": true,
-    "source_api_url": "https://api.openai.com"
-  }
-}
-```
+然后访问：
 
-## ⚙️ 环境变量配置
+- `http://你的IP:端口/admin.html`
+- 登录后再进入 `http://你的IP:端口/config.html`
 
-| 变量名 | 描述 | 必需 | 默认值 |
-|--------|------|------|--------|
-| `OPENAI_API_KEY` | OpenAI API 密钥 | ✅ | - |
-| `SOURCE_API_URL` | 源 API 基础 URL | ❌ | `https://api.openai.com` |
-| `CORS_ALLOW_ORIGIN` | CORS 允许来源 | ❌ | `*` |
-| `ALLOW_ENV_API_KEY` | 允许无鉴权回退到环境密钥 | ❌ | `false` |
-| `HEARTBEAT_INTERVAL_MS` | 心跳间隔（毫秒） | ❌ | `3000` |
-| `CHUNK_TARGET_LENGTH` | 伪流式分块目标长度 | ❌ | `30` |
-| `CHUNK_DELAY_MS` | 伪流式每块延迟（毫秒） | ❌ | `35` |
-| `DEBUG` | 输出额外日志 | ❌ | `0` |
-| `UPSTREAM_EXTRA_HEADERS_JSON` | 追加到上游请求的 HTTP 头（JSON 字符串） | ❌ | - |
+## 配置文件
 
-### 在 Vercel 中管理环境变量
+配置文件路径：`config/config.json`
 
-1. 登录 Vercel 控制台
-2. 进入你的项目
-3. 点击 "Settings" > "Environment Variables"
-4. 添加或修改环境变量
-5. 重新部署以应用更改
+| 字段 | 说明 | 默认值 |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | 服务端兜底 API Key | 空 |
+| `SOURCE_API_URL` | 上游 API 根地址 | `https://api.openai.com` |
+| `CORS_ALLOW_ORIGIN` | CORS 允许来源 | `*` |
+| `ALLOW_ENV_API_KEY` | 请求未带 Authorization 时，是否回退到 `OPENAI_API_KEY` | `false` |
+| `ADMIN_PASSWORD` | 管理页面和管理 API 的登录密码 | 空 |
+| `ADMIN_SESSION_TTL_HOURS` | 管理会话有效期，单位小时 | `24` |
+| `HEARTBEAT_INTERVAL_MS` | SSE 心跳间隔 | `3000` |
+| `CHUNK_TARGET_LENGTH` | 伪流式分块目标长度 | `30` |
+| `CHUNK_DELAY_MS` | 分块发送延迟 | `35` |
+| `DEBUG` | 是否输出调试日志 | `false` |
+| `UPSTREAM_EXTRA_HEADERS_JSON` | 额外上游请求头，JSON 对象字符串 | 空 |
+| `LOG_MAX_OUTPUT_CHARS` | 日志中最多保存多少输出字符 | `12000` |
+| `LOG_RETENTION` | 日志最多保留多少条 | `2000` |
 
-## 🔧 高级配置
+说明：
 
-### 自定义域名
+- 服务每次请求都会按文件 mtime 检查配置是否变化
+- 你可以手动改文件，也可以通过 `/config.html` 保存
+- 如果 `ADMIN_PASSWORD` 为空，管理页和管理 API 会要求先配置密码
 
-1. 在 Vercel 控制台中，进入项目设置
-2. 点击 "Domains" 
-3. 添加你的自定义域名
-4. 根据提示配置 DNS 记录
+## API
 
-### 使用不同的源 API
+### Chat
 
-你可以将代理指向任何兼容 OpenAI 格式的 API：
+- `POST /api/chat`
+- `POST /v1/chat/completions`
 
-```bash
-# 通过环境变量配置
-vercel env add SOURCE_API_URL
-# 输入其他 API 地址，如：
-# https://api.anthropic.com
-# https://api.cohere.ai
-# https://your-custom-api.com
-```
+### Models
 
-若上游需要附加 HTTP 头（如 OpenRouter 建议的 Referer/Title），设置：
+- `GET /api/models`
+- `GET /v1/models`
 
-```bash
-vercel env add UPSTREAM_EXTRA_HEADERS_JSON
-# 示例值：
-# {"HTTP-Referer":"https://your.domain/","X-Title":"vercel-fake-stream"}
-```
+### Status
 
- 
+- `GET /api/status`
 
-## 🔍 故障排除
+### Config
 
-### 常见问题
+- `GET /api/config`
+- `PUT /api/config`
 
-#### Q1: 部署后出现 500 错误
-**A:** 检查环境变量是否正确设置，特别是 `OPENAI_API_KEY`
+### Logs
 
-#### Q2: API 密钥无效错误
-**A:** 确保 OpenAI API 密钥正确，并且账户有足够余额
+- `GET /api/logs?limit=100`
+- `DELETE /api/logs`
 
-#### Q3: 流式响应不工作
-**A:** 确保客户端正确处理 Server-Sent Events (SSE) 格式
+### Admin Session
 
-#### Q4: 连接超时
-**A:** 代理已内置心跳包机制，如仍有问题请检查网络配置
+- `GET /api/admin/session`
+- `POST /api/admin/login`
+- `POST /api/admin/logout`
 
-#### Q5: CORS 错误
-**A:** 代理已设置 CORS 头，如有问题请检查请求头格式
+## 请求日志
 
-### 查看日志
+日志文件路径：`data/request-logs.jsonl`
 
-1. 登录 Vercel 控制台
-2. 进入你的项目
-3. 点击 "Functions" 标签页
-4. 查看实时日志和错误信息
+每条 chat 请求会记录：
 
-## 📊 监控和维护
+- 请求 ID、时间、来源 IP、User-Agent
+- 接口路径、HTTP 方法、模型名
+- 是否流式、状态码、响应耗时
+- `message_count`
+- `usage.prompt_tokens`
+- `usage.completion_tokens`
+- `usage.total_tokens`
+- `output_text`
+- `finish_reason`
+- 错误信息（如果失败）
 
-### 使用量监控
+不会记录：
 
-在 Vercel 控制台中查看：
-- 函数调用次数
-- 带宽使用量
-- 错误率统计
+- 输入消息正文
 
-### 更新代码
+## 页面说明
 
-1. **通过 Git**：推送到 GitHub 会自动触发重新部署
-2. **通过 CLI**：运行 `vercel --prod` 手动部署
+### `/`
 
-### 成本控制
+测试代理请求，支持非流式和伪流式两种模式。
 
-- 监控 OpenAI API 使用量
-- 设置 Vercel 使用量告警
-- 考虑添加请求频率限制
+### `/admin.html`
 
-## 🧪 测试和开发
+管理登录页。登录成功后跳转到配置页或日志页。
 
-### 本地验证（curl）
+### `/config.html`
 
-```bash
-# 启动本地开发服务（另开一个终端执行）
-npx vercel dev
+可视化编辑 `config/config.json`，保存后后端自动热读取。
 
-# 非流式
-curl -sS -X POST http://localhost:3000/api/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"你好！"}],"stream":false}' | jq .
+### `/logs.html`
 
-# 流式（SSE）
-curl -N -X POST http://localhost:3000/api/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  --data-binary '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"你好！"}],"stream":true}'
-```
+查看日志列表、统计信息、响应耗时、token 用量和模型输出。
 
-### 性能测试
+## 常见问题
 
-```bash
-# 测试并发请求
-curl -X POST https://your-project.vercel.app/api/chat \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "测试消息"}],
-    "stream": true
-  }' &
-```
+### 改配置后要重启吗？
 
-## 📝 技术细节
+不需要。配置文件是热读取的。
 
-### 心跳包机制
+### 为什么配置页/日志页会跳到登录页？
 
-为防止长请求超时，代理实现了心跳包机制：
-- 每3秒发送心跳包保持连接
-- 自动在响应完成后停止心跳
-- 监听客户端断开事件
+因为这两个页面和对应 API 受 `ADMIN_PASSWORD` 保护。先去 `/admin.html` 登录。
 
-### 错误处理
+### 为什么登录页提示管理员密码未配置？
 
-- API 密钥验证
-- 请求参数验证  
-- 源 API 错误转发
-- 网络异常处理
-- 资源清理保证
+因为 `config/config.json` 里的 `ADMIN_PASSWORD` 还是空值。
 
-### 安全考虑
+### 为什么日志里没有输入文本？
 
-- 使用环境变量存储敏感信息
-- 默认要求请求头里带 `Authorization: Bearer <key>`，如需对受信来源放开，可将 `ALLOW_ENV_API_KEY` 设为 `true`
-- CORS 允许来源可通过 `CORS_ALLOW_ORIGIN` 精确配置
-- 输入参数验证
+这是有意设计，避免把用户输入内容落盘。
 
-## 🤝 贡献
+### 伪流式到底做了什么？
 
-欢迎提交 Issue 和 Pull Request！
-
-### 开发设置
-
-```bash
-# 克隆项目
-git clone https://github.com/your-username/vercel-fake-stream-proxy.git
-
-# 安装依赖
-npm install
-
-# 创建环境变量文件
-cp .env.example .env.local
-
-# 启动开发（Vercel CLI）
-npm run dev
-```
-
-## 📄 许可证
-
-MIT License
-
-## 🔗 相关链接
-
-- [Vercel 文档](https://vercel.com/docs)
-- [OpenAI API 文档](https://platform.openai.com/docs)
-- [Server-Sent Events 规范](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
-
----
-
-## ⚠️ 重要提醒
-
-- 🔐 **API 密钥安全**：永远不要在代码中硬编码 API 密钥
-- 💰 **成本控制**：监控 OpenAI API 使用量，避免意外费用
-- 🔄 **限制频率**：考虑为生产环境添加请求频率限制
-- 📋 **日志记录**：保留必要的请求日志用于调试和监控
-
-**这是一个"假"流式实现**：先获取完整响应，再按句子/长度分块、带轻微延迟逐块发送，并包含心跳包维持连接。适用于源 API 不支持流式但你需要流式体验的场景。
+服务会先请求上游的非流式结果，再把完整输出拆成多个 SSE chunk，按时间间隔逐段返回给客户端，同时发送 heartbeat，并在最后输出 `[DONE]`。

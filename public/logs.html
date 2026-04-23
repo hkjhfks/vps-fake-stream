@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>请求日志</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f2f6f7;
+            --card: #fcffff;
+            --line: #d0dbe0;
+            --text: #1f2a31;
+            --muted: #5f6a72;
+            --primary: #1565a2;
+            --accent: #c77d24;
+            --danger: #b13d2f;
+            --ok: #1f7c54;
+            --radius: 16px;
+            --shadow: 0 16px 40px rgba(28, 45, 56, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: var(--text);
+            font-family: 'Noto Sans SC', sans-serif;
+            background:
+                radial-gradient(circle at 6% 16%, rgba(21, 101, 162, 0.18), transparent 35%),
+                radial-gradient(circle at 92% 12%, rgba(199, 125, 36, 0.2), transparent 32%),
+                var(--bg);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .shell {
+            max-width: 1220px;
+            margin: 0 auto;
+            display: grid;
+            gap: 16px;
+        }
+
+        .topbar {
+            background: rgba(252, 255, 255, 0.9);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 16px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .brand {
+            margin: 0;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 21px;
+        }
+
+        .hint {
+            margin: 6px 0 0;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .nav {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .nav a,
+        .nav button {
+            text-decoration: none;
+            color: var(--text);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: #fff;
+            font-size: 13px;
+        }
+
+        .nav button {
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 16px;
+            animation: enter .35s ease;
+        }
+
+        @keyframes enter {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        label {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        input[type="number"] {
+            width: 110px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 8px 10px;
+            font: inherit;
+            color: var(--text);
+            background: #fff;
+        }
+
+        button {
+            border: 1px solid transparent;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform .15s ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .btn-secondary {
+            border-color: var(--line);
+            background: #fff;
+            color: var(--text);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        .check {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .card {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px;
+            background: #fff;
+        }
+
+        .card .name {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 5px;
+        }
+
+        .card .value {
+            font-size: 18px;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1.35fr .9fr;
+            gap: 12px;
+            min-height: 480px;
+        }
+
+        .table-wrap {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            overflow: auto;
+            background: #fff;
+            max-height: 560px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        th,
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #edf1f3;
+            text-align: left;
+            vertical-align: top;
+            white-space: nowrap;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            background: #f8fbfd;
+            z-index: 1;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        tbody tr {
+            cursor: pointer;
+        }
+
+        tbody tr:hover {
+            background: #f4f9fc;
+        }
+
+        tbody tr.active {
+            background: #e8f3fb;
+        }
+
+        .ok {
+            color: var(--ok);
+            font-weight: 600;
+        }
+
+        .bad {
+            color: var(--danger);
+            font-weight: 600;
+        }
+
+        .detail {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 12px;
+            background: #fff;
+            overflow: auto;
+        }
+
+        .detail h3 {
+            margin: 0 0 8px;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .kv {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 6px 8px;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+
+        .kv .k {
+            color: var(--muted);
+        }
+
+        .out {
+            border: 1px dashed var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            min-height: 180px;
+            white-space: pre-wrap;
+            font-size: 12px;
+            background: #fcfdfd;
+        }
+
+        .meta {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .status {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .danger {
+            color: var(--danger);
+        }
+
+        @media (max-width: 1080px) {
+            .cards {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div>
+                <h1 class="brand">请求日志</h1>
+                <p class="hint">记录请求元信息、输出内容、token 用量与响应耗时，不保存输入文本内容。</p>
+            </div>
+            <nav class="nav">
+                <a href="/">测试请求</a>
+                <a href="/admin.html">管理登录</a>
+                <a href="/config.html">配置中心</a>
+                <a href="/logs.html">请求日志</a>
+                <button type="button" id="logoutBtn">退出登录</button>
+            </nav>
+        </header>
+
+        <section class="panel">
+            <div class="controls">
+                <label for="limitInput">读取条数</label>
+                <input id="limitInput" type="number" min="1" max="1000" value="100">
+                <button id="refreshBtn" class="btn-primary">刷新</button>
+                <button id="clearBtn" class="btn-danger">清空日志</button>
+                <label class="check"><input type="checkbox" id="autoRefresh" checked> 自动刷新（5秒）</label>
+            </div>
+
+            <div class="cards">
+                <div class="card">
+                    <div class="name">日志条数</div>
+                    <div class="value" id="countCard">0</div>
+                </div>
+                <div class="card">
+                    <div class="name">平均响应(ms)</div>
+                    <div class="value" id="avgMsCard">0</div>
+                </div>
+                <div class="card">
+                    <div class="name">总输入 tokens</div>
+                    <div class="value" id="promptCard">0</div>
+                </div>
+                <div class="card">
+                    <div class="name">总输出 tokens</div>
+                    <div class="value" id="completionCard">0</div>
+                </div>
+            </div>
+
+            <div class="layout">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>模型</th>
+                                <th>状态</th>
+                                <th>流式</th>
+                                <th>耗时(ms)</th>
+                                <th>输入</th>
+                                <th>输出</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logTbody"></tbody>
+                    </table>
+                </div>
+
+                <div class="detail" id="detailPanel">
+                    <h3>日志详情</h3>
+                    <div class="meta">点击左侧任意日志查看详情。</div>
+                </div>
+            </div>
+
+            <div id="status" class="status"></div>
+            <div id="meta" class="meta"></div>
+        </section>
+    </div>
+
+    <script>
+        let logs = [];
+        let selectedId = '';
+        let timer = null;
+
+        const logTbody = document.getElementById('logTbody');
+        const detailPanel = document.getElementById('detailPanel');
+        const statusEl = document.getElementById('status');
+        const metaEl = document.getElementById('meta');
+        const logoutBtn = document.getElementById('logoutBtn');
+
+        function getLoginUrl(reason = '') {
+            const params = new URLSearchParams();
+            params.set('next', location.pathname);
+            if (reason) params.set('reason', reason);
+            return `/admin.html?${params.toString()}`;
+        }
+
+        function goLogin(reason = '') {
+            window.location.href = getLoginUrl(reason);
+        }
+
+        async function parseJsonSafe(res) {
+            try {
+                return await res.json();
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function safeNum(v) {
+            return Number.isFinite(Number(v)) ? Number(v) : 0;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }[char]));
+        }
+
+        function showText(value, fallback = '-') {
+            if (value === undefined || value === null || value === '') return fallback;
+            return escapeHtml(value);
+        }
+
+        function fmtTime(iso) {
+            if (!iso) return '-';
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) return '-';
+            return d.toLocaleString('zh-CN');
+        }
+
+        function setStatus(text, isError = false) {
+            statusEl.textContent = text;
+            statusEl.className = isError ? 'status danger' : 'status';
+        }
+
+        function renderCards() {
+            const count = logs.length;
+            const sumMs = logs.reduce((acc, item) => acc + safeNum(item.response_ms), 0);
+            const sumPrompt = logs.reduce((acc, item) => acc + safeNum(item?.usage?.prompt_tokens), 0);
+            const sumCompletion = logs.reduce((acc, item) => acc + safeNum(item?.usage?.completion_tokens), 0);
+            const avgMs = count ? Math.round(sumMs / count) : 0;
+
+            document.getElementById('countCard').textContent = String(count);
+            document.getElementById('avgMsCard').textContent = String(avgMs);
+            document.getElementById('promptCard').textContent = String(sumPrompt);
+            document.getElementById('completionCard').textContent = String(sumCompletion);
+        }
+
+        function renderDetail(item) {
+            if (!item) {
+                detailPanel.innerHTML = '<h3>日志详情</h3><div class="meta">点击左侧任意日志查看详情。</div>';
+                return;
+            }
+
+            const usage = item.usage || {};
+            const outputText = item.output_text || '';
+            const err = item.error?.message || '';
+
+            detailPanel.innerHTML = `
+        <h3>日志详情</h3>
+        <div class="kv">
+          <div class="k">请求 ID</div><div>${showText(item.request_id)}</div>
+          <div class="k">时间</div><div>${fmtTime(item.created_at)}</div>
+          <div class="k">接口</div><div>${showText(item.endpoint)}</div>
+          <div class="k">方法</div><div>${showText(item.method)}</div>
+          <div class="k">模型</div><div>${showText(item.model)}</div>
+          <div class="k">状态</div><div>${item.status_code || '-'}</div>
+          <div class="k">流式</div><div>${item.stream ? 'true' : 'false'}</div>
+          <div class="k">耗时</div><div>${safeNum(item.response_ms)} ms</div>
+          <div class="k">消息条数</div><div>${safeNum(item.message_count)}</div>
+          <div class="k">温度</div><div>${item.temperature ?? '-'}</div>
+          <div class="k">max_tokens</div><div>${item.max_tokens ?? '-'}</div>
+          <div class="k">输入 tokens</div><div>${safeNum(usage.prompt_tokens)}</div>
+          <div class="k">输出 tokens</div><div>${safeNum(usage.completion_tokens)}</div>
+          <div class="k">总 tokens</div><div>${safeNum(usage.total_tokens)}</div>
+          <div class="k">输出字符</div><div>${safeNum(item.output_chars)}</div>
+          <div class="k">客户端 IP</div><div>${showText(item.client_ip)}</div>
+          <div class="k">User-Agent</div><div>${showText(item.user_agent)}</div>
+          <div class="k">完成原因</div><div>${showText(item.finish_reason)}</div>
+          <div class="k">客户端中断</div><div>${item.client_aborted ? 'true' : 'false'}</div>
+        </div>
+        <div style="font-size:12px; color:#5f6a72; margin-bottom:6px;">模型输出内容</div>
+        <div class="out">${outputText ? escapeHtml(outputText) : '(无输出)'}</div>
+        ${err ? `<div class="meta danger">错误信息：${showText(item.error?.message)}</div>` : ''}
+      `;
+        }
+
+        function renderTable() {
+            logTbody.innerHTML = '';
+
+            for (const item of logs) {
+                const tr = document.createElement('tr');
+                if (item.id === selectedId) tr.classList.add('active');
+
+                const statusClass = Number(item.status_code) >= 400 ? 'bad' : 'ok';
+                tr.innerHTML = `
+          <td>${fmtTime(item.created_at)}</td>
+          <td>${showText(item.model)}</td>
+          <td class="${statusClass}">${item.status_code || '-'}</td>
+          <td>${item.stream ? 'true' : 'false'}</td>
+          <td>${safeNum(item.response_ms)}</td>
+          <td>${safeNum(item?.usage?.prompt_tokens)}</td>
+          <td>${safeNum(item?.usage?.completion_tokens)}</td>
+        `;
+
+                tr.addEventListener('click', () => {
+                    selectedId = item.id;
+                    renderTable();
+                    renderDetail(item);
+                });
+
+                logTbody.appendChild(tr);
+            }
+
+            if (!logs.length) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td colspan="7" style="text-align:center; color:#5f6a72; padding:18px;">暂无日志</td>';
+                logTbody.appendChild(tr);
+            }
+        }
+
+        async function fetchLogs() {
+            const limit = Math.max(1, Math.min(1000, Number(document.getElementById('limitInput').value || 100)));
+            setStatus('读取日志中...');
+
+            try {
+                const res = await fetch(`/api/logs?limit=${limit}`, {
+                    credentials: 'same-origin',
+                });
+                const data = await parseJsonSafe(res);
+                if (res.status === 401 || res.status === 503) {
+                    goLogin(data?.error?.type || 'admin_unauthorized');
+                    throw new Error(data?.error?.message || '管理员登录已失效');
+                }
+                if (!res.ok) {
+                    throw new Error(data?.error?.message || `读取失败：${res.status}`);
+                }
+
+                logs = Array.isArray(data.logs) ? data.logs : [];
+
+                if (selectedId && !logs.some((x) => x.id === selectedId)) {
+                    selectedId = '';
+                }
+
+                if (!selectedId && logs[0]) {
+                    selectedId = logs[0].id;
+                }
+
+                renderCards();
+                renderTable();
+
+                const selected = logs.find((x) => x.id === selectedId) || null;
+                renderDetail(selected);
+
+                metaEl.textContent = `日志文件：${data.log_path || '-'} | 最后刷新：${new Date().toLocaleString('zh-CN')}`;
+                setStatus(`刷新完成，共 ${logs.length} 条`);
+            } catch (error) {
+                setStatus(`读取失败：${error.message}`, true);
+            }
+        }
+
+        async function clearLogs() {
+            if (!confirm('确定清空所有日志吗？')) return;
+
+            setStatus('清空中...');
+
+            try {
+                const res = await fetch('/api/logs', {
+                    method: 'DELETE',
+                    credentials: 'same-origin',
+                });
+                const data = await parseJsonSafe(res);
+                if (res.status === 401 || res.status === 503) {
+                    goLogin(data?.error?.type || 'admin_unauthorized');
+                    throw new Error(data?.error?.message || '管理员登录已失效');
+                }
+                if (!res.ok) {
+                    throw new Error(data?.error?.message || `清空失败：${res.status}`);
+                }
+
+                selectedId = '';
+                await fetchLogs();
+                setStatus('日志已清空');
+            } catch (error) {
+                setStatus(`清空失败：${error.message}`, true);
+            }
+        }
+
+        async function logout() {
+            logoutBtn.disabled = true;
+            setStatus('退出登录中...');
+
+            try {
+                await fetch('/api/admin/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+            } finally {
+                goLogin('logout');
+            }
+        }
+
+        function setupAutoRefresh() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+
+            if (document.getElementById('autoRefresh').checked) {
+                timer = setInterval(fetchLogs, 5000);
+            }
+        }
+
+        document.getElementById('refreshBtn').addEventListener('click', fetchLogs);
+        document.getElementById('clearBtn').addEventListener('click', clearLogs);
+        document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
+        logoutBtn.addEventListener('click', logout);
+
+        fetchLogs();
+        setupAutoRefresh();
+    </script>
+</body>
+
+</html>

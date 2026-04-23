@@ -1,234 +1,555 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>假流式代理测试</title>
+    <title>VPS Fake Stream 控制台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+        rel="stylesheet">
     <style>
+        :root {
+            --bg: #f5f2e8;
+            --card: #fffdf8;
+            --line: #d8d3c4;
+            --text: #2b2a27;
+            --muted: #646156;
+            --primary: #115c5a;
+            --primary-2: #d69b2d;
+            --danger: #a9422b;
+            --shadow: 0 18px 50px rgba(50, 46, 32, 0.12);
+            --radius: 18px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
+            margin: 0;
+            color: var(--text);
+            font-family: 'Noto Sans SC', sans-serif;
+            background:
+                radial-gradient(circle at 6% 10%, rgba(214, 155, 45, 0.2), transparent 36%),
+                radial-gradient(circle at 90% 15%, rgba(17, 92, 90, 0.22), transparent 34%),
+                var(--bg);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .shell {
+            max-width: 1120px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            display: grid;
+            gap: 16px;
         }
-        .container {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+
+        .topbar {
+            background: rgba(255, 253, 248, 0.86);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px 18px;
+            box-shadow: var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
-        .form-group { margin-bottom: 15px; }
-        label {
+
+        .brand {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 20px;
+            letter-spacing: 0.02em;
+            margin: 0;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+            margin: 4px 0 0;
+        }
+
+        .nav {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .nav a {
+            color: var(--text);
+            text-decoration: none;
+            border: 1px solid var(--line);
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #fff;
+            font-size: 13px;
+            transition: transform .18s ease, box-shadow .18s ease;
+        }
+
+        .nav a:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(39, 35, 26, 0.12);
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 18px;
+            animation: rise .35s ease;
+        }
+
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h2 {
+            margin: 0 0 14px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 21px;
+        }
+
+        .field {
+            margin-bottom: 12px;
+        }
+
+        .field label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: var(--muted);
         }
-        input, textarea, select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        textarea { min-height: 100px; resize: vertical; }
+
+        input,
+        select,
+        textarea,
         button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 4px;
+            font: inherit;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: #fff;
+            color: var(--text);
+            outline: none;
+            transition: border-color .2s ease, box-shadow .2s ease;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(17, 92, 90, 0.15);
+        }
+
+        textarea {
+            min-height: 128px;
+            resize: vertical;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            align-items: end;
+        }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+            font-size: 14px;
+            color: var(--muted);
+        }
+
+        .toggle input {
+            width: auto;
+            margin: 0;
+        }
+
+        .btn {
+            border: 1px solid transparent;
+            border-radius: 12px;
+            padding: 10px 14px;
             cursor: pointer;
+            transition: transform .16s ease, filter .16s ease;
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            cursor: not-allowed;
+            filter: grayscale(0.7);
+            transform: none;
+        }
+
+        .btn.primary {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .btn.secondary {
+            border-color: var(--line);
+            background: #fff;
+            color: var(--text);
+        }
+
+        .response-box {
+            border: 1px dashed var(--line);
+            border-radius: 12px;
+            min-height: 300px;
+            padding: 14px;
+            background: #fff;
+            white-space: pre-wrap;
+            overflow: auto;
+        }
+
+        .response-title {
+            margin: 0 0 10px;
+            font-family: 'Space Grotesk', sans-serif;
             font-size: 16px;
         }
-        button:hover { background: #0056b3; }
-        button:disabled { background: #6c757d; cursor: not-allowed; }
-        .response {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 4px;
-            background: #f8f9fa;
-            border-left: 4px solid #007bff;
-            white-space: pre-wrap;
-            font-family: 'Courier New', monospace;
-            min-height: 100px;
+
+        .meta {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 10px;
         }
-        .error { border-left-color: #dc3545; background: #f8d7da; color: #721c24; }
-        .loading { border-left-color: #ffc107; background: #fff3cd; }
-        .stream-chunk { padding: 2px 0; border-bottom: 1px dotted #ddd; }
+
+        .err {
+            color: var(--danger);
+            font-weight: 600;
+        }
+
+        .status {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        @media (max-width: 980px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
-    <script>
-      // 从 location 自动推导 API 基础路径
-      const API_BASE = '';
-    </script>
-  </head>
+</head>
+
 <body>
-    <div class="container">
-        <h1>假流式代理测试页面</h1>
-        <p>用于测试你的假流式代理是否正常工作。</p>
-
-        <form id="testForm">
-            <div class="form-group">
-                <label for="apiKey">API 密钥:</label>
-                <input type="password" id="apiKey" placeholder="输入你的 API 密钥">
+    <div class="shell">
+        <header class="topbar">
+            <div>
+                <h1 class="brand">VPS Fake Stream 控制台</h1>
+                <p class="muted">测试代理、查看状态、跳转配置和日志管理</p>
             </div>
+            <nav class="nav">
+                <a href="/">测试请求</a>
+                <a href="/admin.html">管理登录</a>
+                <a href="/config.html">配置中心</a>
+                <a href="/logs.html">请求日志</a>
+                <a href="/api/status" target="_blank" rel="noreferrer">服务状态</a>
+            </nav>
+        </header>
 
-            <div class="form-group">
-                <label for="model">模型:</label>
-                <div style="display:flex; gap:8px; align-items:center;">
-                  <select id="model" style="flex:1;">
-                      <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                      <option value="gemini-2.5-pro-preview-03-25">gemini-2.5-pro-preview-03-25</option>
-                  </select>
-                  <button type="button" id="loadModelsBtn" title="从上游获取模型列表">加载模型</button>
+        <div class="layout">
+            <section class="panel">
+                <h2>请求参数</h2>
+
+                <form id="testForm">
+                    <div class="field">
+                        <label for="apiKey">请求 API Key（可选，留空时按服务配置处理）</label>
+                        <input type="password" id="apiKey" placeholder="sk-xxxxxx">
+                    </div>
+
+                    <div class="field">
+                        <label for="model">模型</label>
+                        <div class="row">
+                            <select id="model">
+                                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                <option value="gemini-2.5-pro-preview-03-25">gemini-2.5-pro-preview-03-25</option>
+                            </select>
+                            <button type="button" class="btn secondary" id="loadModelsBtn">加载模型</button>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="message">输入内容（不会进入后端日志）</label>
+                        <textarea id="message">你好，请用三句话介绍一下你自己。</textarea>
+                    </div>
+
+                    <div class="field">
+                        <label for="temperature">temperature</label>
+                        <input type="number" id="temperature" min="0" max="2" step="0.1" value="0.7">
+                    </div>
+
+                    <label class="toggle">
+                        <input type="checkbox" id="stream" checked>
+                        启用伪流式返回
+                    </label>
+
+                    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="submit" class="btn primary" id="sendBtn">发送请求</button>
+                        <button type="button" class="btn secondary" id="clearBtn">清空输出</button>
+                    </div>
+                    <div id="formStatus" class="status"></div>
+                </form>
+            </section>
+
+            <section class="panel">
+                <h2>返回结果</h2>
+                <div class="response-box" id="responseBox">
+                    <p class="response-title">等待请求...</p>
+                    <p class="meta">这里会展示非流式 JSON 或流式拼接后的文本。</p>
                 </div>
-                <small id="modelsHint" style="color:#555; display:block; margin-top:6px;">使用上方 API 密钥从 <code>/v1/models</code> 加载可用模型</small>
-            </div>
-
-            <div class="form-group">
-                <label for="message">消息内容:</label>
-                <textarea id="message" placeholder="输入你想要发送的消息...">你好，请介绍一下你自己。</textarea>
-            </div>
-
-            <div class="form-group">
-                <label><input type="checkbox" id="stream" checked> 启用流式响应</label>
-            </div>
-
-            <button type="submit" id="sendBtn">发送请求</button>
-            <a href="/api/status" style="margin-left: 12px;">查看服务状态</a>
-        </form>
-
-        <div id="response" class="response" style="display: none;"></div>
+            </section>
+        </div>
     </div>
 
     <script>
+        const API_BASE = '';
+
         const form = document.getElementById('testForm');
-        const responseDiv = document.getElementById('response');
         const sendBtn = document.getElementById('sendBtn');
+        const clearBtn = document.getElementById('clearBtn');
         const loadModelsBtn = document.getElementById('loadModelsBtn');
+        const responseBox = document.getElementById('responseBox');
+        const formStatus = document.getElementById('formStatus');
 
-        loadModelsBtn?.addEventListener('click', async () => {
-            const apiKey = document.getElementById('apiKey').value;
-            if (!apiKey) { alert('请先填写 API 密钥'); return; }
-            loadModelsBtn.disabled = true;
-            const original = loadModelsBtn.textContent;
-            loadModelsBtn.textContent = '加载中...';
-            try {
-                const res = await fetch(`${API_BASE}/v1/models`, {
-                    headers: { 'Authorization': `Bearer ${apiKey}` }
-                });
-                if (!res.ok) throw new Error(`请求失败: ${res.status}`);
-                const data = await res.json();
-                const models = Array.isArray(data?.data) ? data.data : [];
-                const sel = document.getElementById('model');
-                sel.innerHTML = '';
-                if (models.length === 0) {
-                    throw new Error('上游未返回任何模型');
-                }
-                for (const m of models) {
-                    const id = m?.id || m;
-                    if (!id) continue;
-                    const opt = document.createElement('option');
-                    opt.value = id;
-                    opt.textContent = id;
-                    sel.appendChild(opt);
-                }
-            } catch (err) {
-                alert('加载模型失败: ' + err.message);
-            } finally {
-                loadModelsBtn.disabled = false;
-                loadModelsBtn.textContent = original;
+        function setStatus(text, isError = false) {
+            formStatus.textContent = text;
+            formStatus.style.color = isError ? '#a9422b' : '#646156';
+        }
+
+        function resetResponse() {
+            responseBox.innerHTML = '';
+            const title = document.createElement('p');
+            title.className = 'response-title';
+            title.textContent = '等待请求...';
+            const meta = document.createElement('p');
+            meta.className = 'meta';
+            meta.textContent = '这里会展示非流式 JSON 或流式拼接后的文本。';
+            responseBox.appendChild(title);
+            responseBox.appendChild(meta);
+        }
+
+        function showError(message) {
+            responseBox.innerHTML = `<p class="response-title err">请求失败</p><p class="err">${message}</p>`;
+        }
+
+        function buildHeaders(apiKey) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (apiKey) {
+                headers.Authorization = `Bearer ${apiKey}`;
             }
-        });
+            return headers;
+        }
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const apiKey = document.getElementById('apiKey').value;
-            const model = document.getElementById('model').value;
-            const message = document.getElementById('message').value;
-            const stream = document.getElementById('stream').checked;
-
-            if (!apiKey || !message) {
-                alert('请填写 API 密钥和消息内容');
+        async function loadModels() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) {
+                alert('请先填写请求 API Key 再加载模型。');
                 return;
             }
 
-            responseDiv.style.display = 'block';
-            responseDiv.className = 'response loading';
-            responseDiv.textContent = '正在发送请求...';
+            const oldText = loadModelsBtn.textContent;
+            loadModelsBtn.disabled = true;
+            loadModelsBtn.textContent = '加载中...';
+
+            try {
+                const res = await fetch(`${API_BASE}/v1/models`, {
+                    headers: { Authorization: `Bearer ${apiKey}` },
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data?.error?.message || `请求失败：${res.status}`);
+                }
+
+                const models = Array.isArray(data?.data) ? data.data : [];
+                if (!models.length) {
+                    throw new Error('上游未返回模型列表');
+                }
+
+                const modelSelect = document.getElementById('model');
+                modelSelect.innerHTML = '';
+
+                for (const item of models) {
+                    const id = item?.id || String(item || '');
+                    if (!id) continue;
+                    const option = document.createElement('option');
+                    option.value = id;
+                    option.textContent = id;
+                    modelSelect.appendChild(option);
+                }
+
+                setStatus(`已加载 ${models.length} 个模型`);
+            } catch (error) {
+                setStatus(`加载模型失败：${error.message}`, true);
+            } finally {
+                loadModelsBtn.disabled = false;
+                loadModelsBtn.textContent = oldText;
+            }
+        }
+
+        async function handleNonStreamResponse(res) {
+            const json = await res.json();
+            if (!res.ok) {
+                throw new Error(json?.error?.message || `请求失败：${res.status}`);
+            }
+
+            responseBox.innerHTML = '';
+            const title = document.createElement('p');
+            title.className = 'response-title';
+            title.textContent = '非流式响应';
+            const pre = document.createElement('pre');
+            pre.style.margin = '0';
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.textContent = JSON.stringify(json, null, 2);
+            responseBox.appendChild(title);
+            responseBox.appendChild(pre);
+        }
+
+        async function handleStreamResponse(res) {
+            if (!res.ok) {
+                const fallback = await res.text();
+                throw new Error(`请求失败：${res.status} ${fallback}`);
+            }
+
+            responseBox.innerHTML = '';
+            const title = document.createElement('p');
+            title.className = 'response-title';
+            title.textContent = '流式响应';
+            const meta = document.createElement('p');
+            meta.className = 'meta';
+            meta.textContent = '已将流式 chunk 合并展示';
+            const textHolder = document.createElement('div');
+            textHolder.style.whiteSpace = 'pre-wrap';
+
+            responseBox.appendChild(title);
+            responseBox.appendChild(meta);
+            responseBox.appendChild(textHolder);
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let mergedContent = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+
+                    const payload = line.slice(6).trim();
+                    if (payload === '[DONE]') continue;
+
+                    try {
+                        const parsed = JSON.parse(payload);
+                        if (parsed?.error?.message) {
+                            throw new Error(parsed.error.message);
+                        }
+
+                        const content = parsed?.choices?.[0]?.delta?.content || '';
+                        if (content) {
+                            mergedContent += content;
+                            textHolder.textContent = mergedContent;
+                        }
+                    } catch (error) {
+                        if (error.message) {
+                            throw error;
+                        }
+                    }
+                }
+            }
+        }
+
+        loadModelsBtn.addEventListener('click', loadModels);
+
+        clearBtn.addEventListener('click', () => {
+            resetResponse();
+            setStatus('输出已清空');
+        });
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const model = document.getElementById('model').value;
+            const message = document.getElementById('message').value;
+            const temperature = Number(document.getElementById('temperature').value || 0.7);
+            const stream = document.getElementById('stream').checked;
+
+            if (!message.trim()) {
+                setStatus('请输入消息内容', true);
+                return;
+            }
+
             sendBtn.disabled = true;
+            setStatus('请求发送中...');
 
             try {
                 const response = await fetch(`${API_BASE}/api/chat`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiKey}`
-                    },
+                    headers: buildHeaders(apiKey),
                     body: JSON.stringify({
                         model,
                         messages: [{ role: 'user', content: message }],
                         stream,
-                        temperature: 0.7
-                    })
+                        temperature,
+                    }),
                 });
 
-                if (!stream) {
-                    // 非流式响应
-                    const data = await response.json();
-                    responseDiv.className = 'response';
-                    responseDiv.textContent = JSON.stringify(data, null, 2);
+                if (stream) {
+                    await handleStreamResponse(response);
                 } else {
-                    // 流式响应解析 SSE
-                    responseDiv.className = 'response';
-                    responseDiv.innerHTML = '<div><strong>流式响应:</strong></div>';
-                    
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop();
-
-                        for (const line of lines) {
-                            if (!line.startsWith('data: ')) continue;
-                            const data = line.slice(6);
-                            if (data === '[DONE]') {
-                                const doneDiv = document.createElement('div');
-                                doneDiv.className = 'stream-chunk';
-                                doneDiv.innerHTML = '<strong>[完成]</strong>';
-                                responseDiv.appendChild(doneDiv);
-                                continue;
-                            }
-                            try {
-                                const parsed = JSON.parse(data);
-                                const content = parsed.choices?.[0]?.delta?.content || '';
-                                if (content) {
-                                    const chunkDiv = document.createElement('div');
-                                    chunkDiv.className = 'stream-chunk';
-                                    chunkDiv.textContent = content;
-                                    responseDiv.appendChild(chunkDiv);
-                                }
-                            } catch (err) {
-                                // 忽略解析错误
-                            }
-                        }
-                    }
+                    await handleNonStreamResponse(response);
                 }
 
+                const requestId = response.headers.get('x-request-id') || '';
+                setStatus(requestId ? `完成，请求 ID：${requestId}` : '完成');
             } catch (error) {
-                responseDiv.className = 'response error';
-                responseDiv.textContent = `错误: ${error.message}`;
+                showError(error.message || '未知错误');
+                setStatus(`失败：${error.message || '未知错误'}`, true);
             } finally {
                 sendBtn.disabled = false;
             }
         });
+
+        resetResponse();
     </script>
 </body>
+
 </html>

@@ -1,6 +1,10 @@
+const { getConfig, getConfigPath } = require('../lib/config-store');
+
 module.exports = async (req, res) => {
+  const configValue = getConfig();
+
   // 设置 CORS 头
-  const allowOrigin = process.env.CORS_ALLOW_ORIGIN || '*';
+  const allowOrigin = configValue.CORS_ALLOW_ORIGIN || '*';
   res.setHeader('Access-Control-Allow-Origin', allowOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -23,18 +27,28 @@ module.exports = async (req, res) => {
       streaming: true,
       non_streaming: true,
       models: true,
-      cors: true
+      cors: true,
+      config_hot_reload: true,
+      request_logging: true,
+      admin_auth: true,
     },
     endpoints: {
       chat: '/api/chat',
       status: '/api/status',
       models: '/api/models',
+      config: '/api/config',
+      logs: '/api/logs',
       test_page: '/'
     },
     environment: {
-      has_api_key: !!process.env.OPENAI_API_KEY,
-      source_api_url: process.env.SOURCE_API_URL || 'https://api.openai.com'
-    }
+      has_api_key: !!configValue.OPENAI_API_KEY,
+      source_api_url: configValue.SOURCE_API_URL || 'https://api.openai.com',
+      allow_env_api_key: !!configValue.ALLOW_ENV_API_KEY,
+      admin_auth_enabled: !!configValue.ADMIN_PASSWORD,
+      admin_session_ttl_hours: Number(configValue.ADMIN_SESSION_TTL_HOURS || 24),
+      heartbeat_interval_ms: Number(configValue.HEARTBEAT_INTERVAL_MS || 3000),
+      config_path: getConfigPath(),
+    },
   };
 
   res.json(status);
