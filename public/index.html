@@ -297,7 +297,7 @@
                                 <option value="gpt-4o-mini">gpt-4o-mini</option>
                                 <option value="gemini-2.5-pro-preview-03-25">gemini-2.5-pro-preview-03-25</option>
                             </select>
-                            <button type="button" class="btn secondary" id="loadModelsBtn">加载模型</button>
+                            <button type="button" class="btn secondary" id="loadModelsBtn">获取模型列表</button>
                         </div>
                     </div>
 
@@ -373,44 +373,109 @@
             return headers;
         }
 
+        function normalizeModelId(rawModel) {
+            if (typeof rawModel === 'string') {
+                return rawModel.trim();
+            }
+
+            if (!rawModel || typeof rawModel !== 'object') {
+                return '';
+            }
+
+            if (typeof rawModel.id === 'string' && rawModel.id.trim()) {
+                return rawModel.id.trim();
+            }
+
+            const rawName =
+                (typeof rawModel.name === 'string' && rawModel.name.trim()) ||
+                (typeof rawModel.model === 'string' && rawModel.model.trim()) ||
+                '';
+
+            if (!rawName) return '';
+            return rawName.startsWith('models/') ? rawName.slice(7) : rawName;
+        }
+
+        function extractModelIds(payload) {
+            let list = [];
+
+            if (Array.isArray(payload)) {
+                list = payload;
+            } else if (Array.isArray(payload?.data)) {
+                list = payload.data;
+            } else if (Array.isArray(payload?.models)) {
+                list = payload.models;
+            } else if (Array.isArray(payload?.result?.models)) {
+                list = payload.result.models;
+            } else if (Array.isArray(payload?.items)) {
+                list = payload.items;
+            }
+
+            const seen = new Set();
+            const ids = [];
+
+            for (const item of list) {
+                const id = normalizeModelId(item);
+                if (!id || seen.has(id)) continue;
+                seen.add(id);
+                ids.push(id);
+            }
+
+            return ids;
+        }
+
         async function loadModels() {
             const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey) {
-                alert('请先填写请求 API Key 再加载模型。');
-                return;
-            }
 
             const oldText = loadModelsBtn.textContent;
             loadModelsBtn.disabled = true;
             loadModelsBtn.textContent = '加载中...';
+            setStatus('正在获取模型列表...');
 
             try {
-                const res = await fetch(`${API_BASE}/v1/models`, {
-                    headers: { Authorization: `Bearer ${apiKey}` },
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data?.error?.message || `请求失败：${res.status}`);
+                const headers = {};
+                if (apiKey) {
+                    headers.Authorization = `Bearer ${apiKey}`;
                 }
 
-                const models = Array.isArray(data?.data) ? data.data : [];
-                if (!models.length) {
+                const res = await fetch(`${API_BASE}/api/models?simple=1`, {
+                    headers,
+                });
+
+                const text = await res.text();
+                let data = {};
+                if (text) {
+                    try {
+                        data = JSON.parse(text);
+                    } catch (_) {
+                        data = {};
+                    }
+                }
+
+                if (!res.ok) {
+                    throw new Error(data?.error?.message || (text ? text.slice(0, 220) : `请求失败：${res.status}`));
+                }
+
+                const modelIds = extractModelIds(data);
+                if (!modelIds.length) {
                     throw new Error('上游未返回模型列表');
                 }
 
                 const modelSelect = document.getElementById('model');
+                const selectedValue = modelSelect.value;
                 modelSelect.innerHTML = '';
 
-                for (const item of models) {
-                    const id = item?.id || String(item || '');
-                    if (!id) continue;
+                for (const id of modelIds) {
                     const option = document.createElement('option');
                     option.value = id;
                     option.textContent = id;
                     modelSelect.appendChild(option);
                 }
 
-                setStatus(`已加载 ${models.length} 个模型`);
+                if (selectedValue && modelIds.includes(selectedValue)) {
+                    modelSelect.value = selectedValue;
+                }
+
+                setStatus(`已获取 ${modelIds.length} 个模型`);
             } catch (error) {
                 setStatus(`加载模型失败：${error.message}`, true);
             } finally {

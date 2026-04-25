@@ -1,6 +1,75 @@
 const axios = require('axios');
 const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
 
+function parseBooleanFlag(value) {
+  if (typeof value === 'boolean') return value;
+  if (value === undefined || value === null) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+function normalizeModelId(rawModel) {
+  if (typeof rawModel === 'string') return rawModel.trim();
+  if (!rawModel || typeof rawModel !== 'object') return '';
+
+  if (typeof rawModel.id === 'string' && rawModel.id.trim()) {
+    return rawModel.id.trim();
+  }
+
+  const rawName =
+    (typeof rawModel.name === 'string' && rawModel.name.trim()) ||
+    (typeof rawModel.model === 'string' && rawModel.model.trim()) ||
+    '';
+
+  if (!rawName) return '';
+  return rawName.startsWith('models/') ? rawName.slice(7) : rawName;
+}
+
+function normalizeModelList(rawPayload) {
+  let sourceList = [];
+
+  if (Array.isArray(rawPayload)) {
+    sourceList = rawPayload;
+  } else if (Array.isArray(rawPayload?.data)) {
+    sourceList = rawPayload.data;
+  } else if (Array.isArray(rawPayload?.models)) {
+    sourceList = rawPayload.models;
+  } else if (Array.isArray(rawPayload?.result?.models)) {
+    sourceList = rawPayload.result.models;
+  } else if (Array.isArray(rawPayload?.items)) {
+    sourceList = rawPayload.items;
+  }
+
+  const seen = new Set();
+  const normalized = [];
+
+  for (const item of sourceList) {
+    const id = normalizeModelId(item);
+    if (!id || seen.has(id)) continue;
+
+    seen.add(id);
+
+    const model = {
+      id,
+      object: 'model',
+    };
+
+    if (item && typeof item === 'object') {
+      if (Number.isFinite(item.created)) {
+        model.created = item.created;
+      }
+
+      if (typeof item.owned_by === 'string' && item.owned_by.trim()) {
+        model.owned_by = item.owned_by.trim();
+      }
+    }
+
+    normalized.push(model);
+  }
+
+  return normalized;
+}
+
 module.exports = async (req, res) => {
   const configValue = getConfig();
 
@@ -35,13 +104,26 @@ module.exports = async (req, res) => {
   }
 
   const requestApiKey = hasHeaderKey ? headerKey : envApiKey;
+  const useSimpleResponse = parseBooleanFlag(req.query?.simple);
 
   const headers = { Authorization: `Bearer ${requestApiKey}` };
   Object.assign(headers, getUpstreamExtraHeaders(configValue));
 
   try {
     const response = await axios.get(`${sourceApiUrl}/v1/models`, { headers });
-    return res.status(200).json(response.data);
+
+    if (!useSimpleResponse) {
+      return res.status(200).json(response.data);
+    }
+
+    const models = normalizeModelList(response.data);
+    return res.status(200).json({
+      object: 'list',
+      data: models,
+      count: models.length,
+      source_api_url: sourceApiUrl,
+      fetched_at: new Date().toISOString(),
+    });
   } catch (error) {
     const upErr = error?.response?.data || null;
     const statusCode = error?.response?.status || 500;

@@ -14,6 +14,9 @@
 - 兼容接口：
   - `POST /v1/chat/completions`
   - `GET /v1/models`
+- 模型列表简化模式：
+  - `GET /api/models?simple=1`
+  - 返回统一格式的模型 ID 列表，便于前端直接渲染下拉框
 - 配置文件热读取：
   - 配置存放在 `config/config.json`
   - 修改后无需重启进程
@@ -101,6 +104,27 @@ PORT=8080 npm run start
 
 - `GET /api/models`
 - `GET /v1/models`
+- `GET /api/models?simple=1`
+
+`simple=1` 时，返回格式示例：
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "gpt-4o-mini", "object": "model" },
+    { "id": "gemini-2.5-pro", "object": "model" }
+  ],
+  "count": 2,
+  "source_api_url": "https://api.openai.com",
+  "fetched_at": "2026-04-25T00:00:00.000Z"
+}
+```
+
+说明：
+
+- 不带 `simple` 参数时，仍保持原样透传上游 `/v1/models` 响应
+- 带 `simple=1` 时会尽量兼容不同上游结构并抽取模型 ID
 
 ### Status
 
@@ -147,7 +171,7 @@ PORT=8080 npm run start
 
 ### `/`
 
-测试代理请求，支持非流式和伪流式两种模式。
+测试代理请求，支持非流式和伪流式两种模式，并可一键获取模型列表填充下拉框。
 
 ### `/admin.html`
 
