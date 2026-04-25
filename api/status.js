@@ -1,13 +1,14 @@
 const { getConfig, getConfigPath } = require('../lib/config-store');
+const { applyCors } = require('../lib/cors');
 
 module.exports = async (req, res) => {
   const configValue = getConfig();
 
-  // 设置 CORS 头
-  const allowOrigin = configValue.CORS_ALLOW_ORIGIN || '*';
-  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  applyCors(req, res, {
+    allowOrigin: configValue.CORS_ALLOW_ORIGIN,
+    methods: 'GET, OPTIONS',
+    headers: 'Content-Type',
+  });
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();

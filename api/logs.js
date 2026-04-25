@@ -1,13 +1,15 @@
 const { getConfig } = require('../lib/config-store');
 const { getRecentRequestLogs, clearRequestLogs, getLogPath } = require('../lib/request-logs');
+const { applyCors } = require('../lib/cors');
 
 module.exports = async (req, res) => {
     const currentConfig = getConfig();
-    const allowOrigin = currentConfig.CORS_ALLOW_ORIGIN || '*';
 
-    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    applyCors(req, res, {
+        allowOrigin: currentConfig.CORS_ALLOW_ORIGIN,
+        methods: 'GET, DELETE, OPTIONS',
+        headers: 'Content-Type, Authorization',
+    });
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();

@@ -75,7 +75,7 @@ PORT=8080 npm run start
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 服务端兜底 API Key | 空 |
 | `SOURCE_API_URL` | 上游 API 根地址 | `https://api.openai.com` |
-| `CORS_ALLOW_ORIGIN` | CORS 允许来源 | `*` |
+| `CORS_ALLOW_ORIGIN` | CORS 允许来源，支持单个域名、逗号分隔或换行分隔多个域名 | `*` |
 | `ALLOW_ENV_API_KEY` | 请求未带 Authorization 时，是否回退到 `OPENAI_API_KEY` | `false` |
 | `ADMIN_PASSWORD` | 管理页面和管理 API 的登录密码 | 空 |
 | `ADMIN_SESSION_TTL_HOURS` | 管理会话有效期，单位小时 | `24` |
@@ -92,6 +92,7 @@ PORT=8080 npm run start
 - 服务每次请求都会按文件 mtime 检查配置是否变化
 - 你可以手动改文件，也可以通过 `/config.html` 保存
 - 如果 `ADMIN_PASSWORD` 为空，管理页和管理 API 会要求先配置密码
+- `CORS_ALLOW_ORIGIN` 可填写 `https://a.example.com, https://b.example.com`，服务会按请求头里的 `Origin` 精确匹配并回显
 
 ## API
 

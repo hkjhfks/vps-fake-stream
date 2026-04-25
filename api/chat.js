@@ -2,6 +2,7 @@ const axios = require('axios');
 const { randomUUID } = require('crypto');
 const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
 const { appendRequestLog } = require('../lib/request-logs');
+const { applyCors } = require('../lib/cors');
 
 // 延迟函数
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -164,11 +165,11 @@ module.exports = async (req, res) => {
     }
   };
 
-  // CORS 支持
-  const allowOrigin = configValue.CORS_ALLOW_ORIGIN || '*';
-  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  applyCors(req, res, {
+    allowOrigin: configValue.CORS_ALLOW_ORIGIN,
+    methods: 'POST, OPTIONS',
+    headers: 'Content-Type, Authorization',
+  });
   res.setHeader('X-Request-Id', requestId);
 
   if (req.method === 'OPTIONS') return res.status(200).end();

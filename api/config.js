@@ -1,12 +1,14 @@
 const { getConfig, updateConfig, getConfigPath } = require('../lib/config-store');
+const { applyCors } = require('../lib/cors');
 
 module.exports = async (req, res) => {
     const currentConfig = getConfig();
-    const allowOrigin = currentConfig.CORS_ALLOW_ORIGIN || '*';
 
-    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, PATCH, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    applyCors(req, res, {
+        allowOrigin: currentConfig.CORS_ALLOW_ORIGIN,
+        methods: 'GET, PUT, PATCH, POST, OPTIONS',
+        headers: 'Content-Type, Authorization',
+    });
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();

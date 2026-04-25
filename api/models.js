@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
+const { applyCors } = require('../lib/cors');
 
 function parseBooleanFlag(value) {
   if (typeof value === 'boolean') return value;
@@ -73,11 +74,11 @@ function normalizeModelList(rawPayload) {
 module.exports = async (req, res) => {
   const configValue = getConfig();
 
-  // CORS
-  const allowOrigin = configValue.CORS_ALLOW_ORIGIN || '*';
-  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  applyCors(req, res, {
+    allowOrigin: configValue.CORS_ALLOW_ORIGIN,
+    methods: 'GET, OPTIONS',
+    headers: 'Content-Type, Authorization',
+  });
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -130,4 +131,3 @@ module.exports = async (req, res) => {
     return res.status(statusCode).json(upErr || { error: { message: 'Failed to fetch models', type: 'server_error' } });
   }
 };
-
