@@ -4,6 +4,7 @@ import type {
   LoginResponse,
   LogsResponse,
   ModelsResponse,
+  RequestLog,
   SessionInfo,
   StatusResponse,
 } from './types';
@@ -29,6 +30,8 @@ interface RequestOptions {
   admin?: boolean;
   skipAuthEvent?: boolean;
   signal?: AbortSignal;
+  /** Return null for 304 Not Modified instead of throwing. */
+  notModifiedAsNull?: boolean;
 }
 
 function parseRetryAfter(header: string | null): number | null {
@@ -64,6 +67,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ApiError('网络连接失败，请检查服务是否在线', 0, 'network_error');
+  }
+
+  // A fetched 304 keeps its cached body in most browsers, but guard for the
+  // case where the status surfaces to script.
+  if (response.status === 304 && options.notModifiedAsNull) {
+    return null as unknown as T;
   }
 
   const text = await response.text();
@@ -133,7 +142,15 @@ export const api = {
   },
 
   logs: {
-    list: (limit = 200) => request<LogsResponse>(`/api/logs?limit=${encodeURIComponent(String(limit))}`, { admin: true }),
+    /** Resolves to null when the server answers 304 Not Modified. */
+    list: (limit = 200, full = false) => {
+      const query = `/api/logs?limit=${encodeURIComponent(String(limit))}${full ? '&full=1' : ''}`;
+      return request<LogsResponse | null>(query, { admin: true, notModifiedAsNull: true });
+    },
+    detail: (id: string) => request<{ status: string; log: RequestLog }>(
+      `/api/logs/${encodeURIComponent(id)}`,
+      { admin: true },
+    ),
     clear: () => request<{ status: string; message: string }>('/api/logs', { method: 'DELETE', admin: true }),
   },
 };

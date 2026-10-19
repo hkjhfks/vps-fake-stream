@@ -89,8 +89,12 @@ export interface RequestLog {
   temperature?: number | null;
   max_tokens?: number | null;
   usage?: Partial<TokenUsage>;
+  /** Only present on the detail endpoint (`/api/logs/:id`) and `?full=1`. */
   output_text?: string;
   output_chars?: number;
+  /** First 160 characters of the output; present on list rows. */
+  output_preview?: string;
+  has_output?: boolean;
   finish_reason?: string | null;
   error?: { message?: string; type?: string } | null;
   client_aborted?: boolean;

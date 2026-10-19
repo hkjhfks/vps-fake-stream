@@ -4,41 +4,17 @@ import { useRouter } from 'vue-router';
 import AppIcon from '@/components/AppIcon.vue';
 import ModelPicker from '@/components/ModelPicker.vue';
 import PageHeader from '@/components/PageHeader.vue';
+import ChatMessageItem from '@/components/playground/ChatMessageItem.vue';
+import LiveChatMessage from '@/components/playground/LiveChatMessage.vue';
+import MetricsPanel from '@/components/playground/MetricsPanel.vue';
+import type { Metrics, UiMessage } from '@/components/playground/types';
 import { getErrorMessage } from '@/api/client';
 import { sendChat } from '@/api/chat';
-import type { ChatMessage, StreamEvent, TokenUsage } from '@/api/types';
+import type { ChatMessage, StreamEvent } from '@/api/types';
+import { beginLive, endLive, updateLive, usePlaygroundLive } from '@/composables/usePlaygroundLive';
 import { useToast } from '@/composables/useToast';
 import { copyText } from '@/utils/format';
 import { renderMarkdown } from '@/utils/markdown';
-
-interface UiMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  model: string;
-  streaming: boolean;
-  aborted: boolean;
-  error: string;
-  createdAt: number;
-}
-
-interface Metrics {
-  active: boolean;
-  streaming: boolean;
-  ttft: number | null;
-  total: number | null;
-  chunks: number;
-  chars: number;
-  chunkSizes: number[];
-  promptTokens: number | null;
-  completionTokens: number | null;
-  totalTokens: number | null;
-  requestId: string;
-  aborted: boolean;
-  model: string;
-  temperature: number;
-  rawEvents: StreamEvent[];
-}
 
 const router = useRouter();
 const { showToast } = useToast();
@@ -50,16 +26,18 @@ const draft = ref('');
 const apiKey = ref('');
 const systemPrompt = ref('');
 const showAdvanced = ref(false);
-const showRaw = ref(false);
 const sending = ref(false);
 const messages = ref<UiMessage[]>([]);
 const chatBody = ref<HTMLElement | null>(null);
 const composer = ref<HTMLTextAreaElement | null>(null);
 const autoScroll = ref(true);
+const liveModel = ref('');
+const { active: liveActive } = usePlaygroundLive();
 let abortController: AbortController | null = null;
 let sequence = 0;
 
 const metrics = reactive<Metrics>({
+  runId: 0,
   active: false,
   streaming: false,
   ttft: null,
@@ -78,22 +56,7 @@ const metrics = reactive<Metrics>({
 });
 
 const canSend = computed(() => Boolean(draft.value.trim() && model.value.trim() && !sending.value));
-const chatCount = computed(() => messages.value.length);
-const ttfbSeconds = computed(() => metrics.ttft === null ? '—' : (metrics.ttft / 1000).toFixed(2));
-const totalSeconds = computed(() => metrics.total === null ? '—' : (metrics.total / 1000).toFixed(2));
-const ttfbPct = computed(() => {
-  if (!metrics.total || metrics.ttft === null) return 0;
-  return Math.min(100, Math.max(2, (metrics.ttft / metrics.total) * 100));
-});
-const chunkBars = computed(() => {
-  const sizes = metrics.chunkSizes.slice(-24);
-  const max = Math.max(...sizes, 1);
-  return sizes.map((size) => Math.max(10, Math.round((size / max) * 100)));
-});
-const rawEventsText = computed(() => {
-  if (!metrics.rawEvents.length) return '还没有收到 SSE 事件。';
-  return metrics.rawEvents.map((event) => `+${event.at}ms  ${JSON.stringify(event.data)}`).join('\n');
-});
+const chatCount = computed(() => messages.value.length + (liveActive.value ? 1 : 0));
 
 const suggestions = [
   '用三句话介绍你自己。',
@@ -106,12 +69,45 @@ function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${sequence}`;
 }
 
-function formatSeconds(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms)) return '—';
-  return `${(ms / 1000).toFixed(2)} s`;
+/** Finalised messages are immutable: their HTML is rendered once and reused. */
+function freezeMessage(message: UiMessage): UiMessage {
+  return Object.freeze(message) as UiMessage;
+}
+
+let metricsTimer: number | null = null;
+let queuedChars = 0;
+let queuedChunks = 0;
+
+function clearMetricsTimer() {
+  if (metricsTimer !== null) {
+    window.clearTimeout(metricsTimer);
+    metricsTimer = null;
+  }
+}
+
+/** Metrics are display-only; refreshing them at ~10 Hz is indistinguishable. */
+function queueMetrics(chars: number, chunks: number) {
+  queuedChars = chars;
+  queuedChunks = chunks;
+  if (metricsTimer !== null) return;
+  metricsTimer = window.setTimeout(() => {
+    metricsTimer = null;
+    metrics.chars = queuedChars;
+    metrics.chunks = queuedChunks;
+  }, 100);
+}
+
+function flushMetrics() {
+  clearMetricsTimer();
+  metrics.chars = queuedChars;
+  metrics.chunks = queuedChunks;
 }
 
 function resetMetrics() {
+  clearMetricsTimer();
+  queuedChars = 0;
+  queuedChunks = 0;
+  metrics.runId += 1;
   metrics.active = false;
   metrics.streaming = false;
   metrics.ttft = null;
@@ -127,26 +123,36 @@ function resetMetrics() {
   metrics.model = '';
   metrics.temperature = 0.7;
   metrics.rawEvents = [];
-  showRaw.value = false;
 }
 
-function maybeScroll() {
-  if (!autoScroll.value) return;
-  nextTick(() => {
+let scrollFrame = 0;
+let programmaticScroll = false;
+
+/** Coalesce scroll writes into one layout read per frame (was one per chunk). */
+function requestScroll(force = false) {
+  if (!autoScroll.value && !force) return;
+  if (scrollFrame) return;
+  scrollFrame = window.requestAnimationFrame(() => {
+    scrollFrame = 0;
     const element = chatBody.value;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    programmaticScroll = true;
+    element.scrollTop = element.scrollHeight;
+    window.requestAnimationFrame(() => {
+      programmaticScroll = false;
+    });
   });
 }
 
 function onChatScroll() {
   const element = chatBody.value;
-  if (!element) return;
+  if (!element || programmaticScroll) return;
   autoScroll.value = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
 }
 
 function scrollToBottom() {
   autoScroll.value = true;
-  maybeScroll();
+  requestScroll(true);
 }
 
 function fillSuggestion(text: string) {
@@ -181,6 +187,19 @@ function buildHistory(): ChatMessage[] {
   return history;
 }
 
+function commitAssistant(input: { content: string; model: string; aborted: boolean; error: string }) {
+  messages.value.push(freezeMessage({
+    id: uid('assistant'),
+    role: 'assistant',
+    content: input.content,
+    html: renderMarkdown(input.content),
+    model: input.model,
+    aborted: input.aborted,
+    error: input.error,
+    createdAt: Date.now(),
+  }));
+}
+
 async function send() {
   if (sending.value || !canSend.value) return;
   const text = draft.value.trim();
@@ -196,28 +215,18 @@ async function send() {
   const activeTemperature = Number.isFinite(rawTemperature)
     ? Math.min(2, Math.max(0, rawTemperature))
     : 0.7;
-  const userMessage: UiMessage = {
+
+  messages.value.push(freezeMessage({
     id: uid('user'),
     role: 'user',
     content: text,
+    html: '',
     model: activeModel,
-    streaming: false,
     aborted: false,
     error: '',
     createdAt: Date.now(),
-  };
-  const assistant: UiMessage = {
-    id: uid('assistant'),
-    role: 'assistant',
-    content: '',
-    model: activeModel,
-    streaming: true,
-    aborted: false,
-    error: '',
-    createdAt: Date.now(),
-  };
+  }));
 
-  messages.value.push(userMessage, assistant);
   draft.value = '';
   sending.value = true;
   autoScroll.value = true;
@@ -226,7 +235,9 @@ async function send() {
   metrics.streaming = true;
   metrics.model = activeModel;
   metrics.temperature = activeTemperature;
-  showRaw.value = false;
+
+  liveModel.value = activeModel;
+  beginLive();
 
   const requestMessages: ChatMessage[] = [];
   if (systemPrompt.value.trim()) requestMessages.push({ role: 'system', content: systemPrompt.value.trim() });
@@ -234,7 +245,11 @@ async function send() {
 
   abortController = new AbortController();
   const started = performance.now();
-  maybeScroll();
+  requestScroll(true);
+
+  const rawEvents: StreamEvent[] = [];
+  let chunkCount = 0;
+  let fullText = '';
 
   try {
     const result = await sendChat(
@@ -246,29 +261,29 @@ async function send() {
         apiKey: apiKey.value,
       },
       {
-        onDelta: (_delta, fullContent) => {
-          assistant.content = fullContent;
-          metrics.chars = fullContent.length;
-          metrics.chunks += 1;
+        onDelta: (_delta, nextContent) => {
+          fullText = nextContent;
+          chunkCount += 1;
+          updateLive(nextContent);
           if (metrics.ttft === null) metrics.ttft = Math.round(performance.now() - started);
-          maybeScroll();
+          queueMetrics(nextContent.length, chunkCount);
+          requestScroll();
         },
         onEvent: (event) => {
-          if (metrics.rawEvents.length < 600) metrics.rawEvents.push(event);
+          if (rawEvents.length < 600) rawEvents.push(event);
         },
       },
       abortController.signal,
     );
 
-    assistant.content = result.content;
-    assistant.streaming = false;
-    assistant.aborted = result.aborted;
-    if (result.aborted) {
-      assistant.content = result.content || '已停止生成。';
-    } else if (!result.content) {
-      assistant.error = '上游返回了空内容。';
-    }
+    commitAssistant({
+      content: result.aborted ? (result.content || '已停止生成。') : result.content,
+      model: activeModel,
+      aborted: result.aborted,
+      error: !result.aborted && !result.content ? '上游返回了空内容。' : '',
+    });
 
+    flushMetrics();
     metrics.streaming = false;
     metrics.ttft = result.firstChunkMs;
     metrics.total = result.totalMs;
@@ -280,17 +295,21 @@ async function send() {
     metrics.totalTokens = result.usage.total_tokens ?? null;
     metrics.requestId = result.requestId || '';
     metrics.aborted = result.aborted;
-    maybeScroll();
+    metrics.rawEvents = rawEvents;
+    requestScroll();
   } catch (error) {
-    assistant.streaming = false;
-    assistant.error = getErrorMessage(error);
+    const message = getErrorMessage(error);
+    commitAssistant({ content: fullText, model: activeModel, aborted: false, error: message });
+    clearMetricsTimer();
     metrics.streaming = false;
     metrics.total = metrics.total ?? Math.round(performance.now() - started);
-    showToast(assistant.error, 'error');
+    metrics.rawEvents = rawEvents;
+    showToast(message, 'error');
   } finally {
+    endLive();
     sending.value = false;
     abortController = null;
-    maybeScroll();
+    requestScroll();
   }
 }
 
@@ -308,8 +327,8 @@ function clearConversation() {
   showToast('已清空对话', 'info');
 }
 
-async function copyMessage(message: UiMessage) {
-  const ok = await copyText(message.content);
+async function copyMessage(content: string) {
+  const ok = await copyText(content);
   showToast(ok ? '回复已复制' : '复制失败', ok ? 'success' : 'error');
 }
 
@@ -343,6 +362,8 @@ function keydownComposer(event: KeyboardEvent) {
 }
 
 onBeforeUnmount(() => {
+  if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
+  clearMetricsTimer();
   abortController?.abort();
 });
 </script>
@@ -417,7 +438,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div ref="chatBody" class="chat-body" @scroll="onChatScroll">
-            <div v-if="!messages.length" class="playground-empty">
+            <div v-if="!messages.length && !liveActive" class="playground-empty">
               <div class="playground-empty-icon"><AppIcon name="waveform" :size="22" /></div>
               <strong>开始验证上游</strong>
               <span>选一个模型，发一条消息。流式模式下会显示分块节奏、首块延迟与 Token 用量。</span>
@@ -428,52 +449,19 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-for="message in messages" :key="message.id" class="msg" :class="{ 'msg-user': message.role === 'user' }">
-              <template v-if="message.role === 'user'">
-                <div class="msg-bubble">{{ message.content }}</div>
-              </template>
-              <template v-else>
-                <span class="msg-avatar"><AppIcon name="waveform" :size="13" /></span>
-                <div class="msg-main">
-                  <div class="msg-meta">
-                    <strong>FakeStream</strong>
-                    <span>{{ message.model }}</span>
-                    <span v-if="message.streaming" class="pill pill-green">流式</span>
-                    <span v-else-if="message.aborted" class="pill">已停止</span>
-                  </div>
+            <ChatMessageItem
+              v-for="message in messages"
+              :key="message.id"
+              :message="message"
+              :can-regenerate="!sending"
+              @copy="copyMessage"
+              @regenerate="regenerate"
+            />
 
-                  <div v-if="message.error" class="stream-error">
-                    <AppIcon name="alert" :size="13" />
-                    <span>{{ message.error }}</span>
-                  </div>
-
-                  <div v-if="message.streaming" class="msg-content streaming-text">
-                    {{ message.content || '正在等待上游…' }}<span class="typing-caret" />
-                  </div>
-                  <div v-else class="md-content" v-html="renderMarkdown(message.content)" />
-
-                  <div v-if="!message.streaming && message.content" class="msg-actions">
-                    <button type="button" class="msg-action" @click="copyMessage(message)">
-                      <AppIcon name="copy" :size="11" /> 复制
-                    </button>
-                    <button type="button" class="msg-action" :disabled="sending" @click="regenerate">
-                      <AppIcon name="rotate" :size="11" /> 重新生成
-                    </button>
-                  </div>
-
-                  <div v-if="message.streaming" class="stream-status">
-                    <span class="status-dot is-live" />
-                    正在生成 · 已收到 {{ metrics.chunks }} 块
-                    <button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto;height:24px;padding:0 8px;font-size:9px;" @click="stopGeneration">
-                      <AppIcon name="stop" :size="10" /> 停止
-                    </button>
-                  </div>
-                </div>
-              </template>
-            </div>
+            <LiveChatMessage v-if="liveActive" :model="liveModel" :metrics="metrics" @stop="stopGeneration" />
           </div>
 
-          <button v-if="!autoScroll && messages.length" type="button" class="scroll-bottom" @click="scrollToBottom">
+          <button v-if="!autoScroll && (messages.length || liveActive)" type="button" class="scroll-bottom" @click="scrollToBottom">
             <AppIcon name="chevronDown" :size="13" /> 回到底部
           </button>
 
@@ -502,93 +490,12 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <aside class="metrics-panel glass" aria-label="本次请求指标">
-          <div class="metrics-head">
-            <strong>本次请求</strong>
-            <span v-if="metrics.active" class="pill" :class="metrics.streaming ? 'pill-green' : metrics.aborted ? 'pill-orange' : 'pill-blue'">
-              {{ metrics.streaming ? '流式生成中' : metrics.aborted ? '已停止' : '已完成' }}
-            </span>
-          </div>
-
-          <template v-if="metrics.active">
-            <div class="metric-hero">
-              <div class="metric-hero-label"><AppIcon name="zap" :size="10" /> 首块延迟</div>
-              <div class="metric-hero-value">{{ ttfbSeconds }}<small v-if="metrics.ttft !== null">s</small></div>
-              <div class="metric-hero-sub">
-                <AppIcon name="checkCircle" :size="10" />
-                {{ metrics.streaming ? '正在分块输出' : '首块已返回' }}
-              </div>
-            </div>
-
-            <div class="metric-grid">
-              <div class="metric-cell"><span>总耗时</span><strong>{{ totalSeconds }}<small v-if="metrics.total !== null">s</small></strong></div>
-              <div class="metric-cell"><span>分块</span><strong>{{ metrics.chunks }}<small>块</small></strong></div>
-              <div class="metric-cell"><span>输出字符</span><strong>{{ metrics.chars }}</strong></div>
-              <div class="metric-cell"><span>Tokens</span><strong>{{ metrics.promptTokens ?? '—' }}<small>/ {{ metrics.completionTokens ?? '—' }}</small></strong></div>
-            </div>
-
-            <div class="waterfall">
-              <div class="waterfall-title"><span>请求时间线</span><strong>{{ formatSeconds(metrics.total) }}</strong></div>
-              <div class="waterfall-row">
-                <span>请求</span>
-                <div class="waterfall-track"><i class="waterfall-bar dim" style="left:0;width:3%" /></div>
-                <span class="waterfall-ms">0 ms</span>
-              </div>
-              <div class="waterfall-row">
-                <span>首块</span>
-                <div class="waterfall-track"><i class="waterfall-bar" :style="{ left: '0%', width: `${ttfbPct}%` }" /></div>
-                <span class="waterfall-ms">{{ formatSeconds(metrics.ttft) }}</span>
-              </div>
-              <div class="waterfall-row">
-                <span>尾块</span>
-                <div class="waterfall-track"><i class="waterfall-bar" :style="{ left: `${ttfbPct}%`, width: `${Math.max(0, 100 - ttfbPct)}%` }" /></div>
-                <span class="waterfall-ms">{{ formatSeconds(metrics.total) }}</span>
-              </div>
-            </div>
-
-            <div class="metrics-note">
-              上游一次性返回，服务按配置拆分。首块延迟主要来自上游，不是分块器。
-            </div>
-
-            <div v-if="chunkBars.length" class="chunk-cadence">
-              <div class="chunk-head"><span>分块节奏</span><span>{{ metrics.chunks }} 块</span></div>
-              <div class="chunk-bars" aria-hidden="true">
-                <i v-for="(height, index) in chunkBars" :key="index" :style="{ height: `${height}%` }" />
-              </div>
-            </div>
-
-            <div class="param-list">
-              <div><span>模型</span><strong>{{ metrics.model }}</strong></div>
-              <div><span>温度</span><strong>{{ metrics.temperature }}</strong></div>
-              <div><span>模式</span><strong>{{ stream ? '流式' : '非流式' }}</strong></div>
-            </div>
-
-            <div class="metrics-actions">
-              <button type="button" class="metrics-action" @click="showRaw = !showRaw">
-                <AppIcon name="terminal" :size="12" /> {{ showRaw ? '收起原始 SSE' : '查看原始 SSE' }}
-                <AppIcon name="chevronRight" :size="10" class="chev" />
-              </button>
-              <button type="button" class="metrics-action" :disabled="!metrics.requestId" @click="copyRequestId">
-                <AppIcon name="copy" :size="12" /> 复制请求 ID
-                <AppIcon name="chevronRight" :size="10" class="chev" />
-              </button>
-              <button v-if="metrics.requestId" type="button" class="metrics-action" @click="openLogs">
-                <AppIcon name="logs" :size="12" /> 在日志中查看
-                <AppIcon name="chevronRight" :size="10" class="chev" />
-              </button>
-            </div>
-
-            <div v-if="showRaw" class="raw-events-wrap">
-              <pre class="raw-events">{{ rawEventsText }}</pre>
-            </div>
-          </template>
-
-          <div v-else class="metrics-empty">
-            <div class="metrics-empty-icon"><AppIcon name="activity" :size="20" /></div>
-            <strong>还没有请求</strong>
-            <span>发送一条消息后，这里会显示首块延迟、分块节奏和 Token 用量。</span>
-          </div>
-        </aside>
+        <MetricsPanel
+          :metrics="metrics"
+          :stream="stream"
+          @copy-request-id="copyRequestId"
+          @open-logs="openLogs"
+        />
       </div>
     </div>
   </div>

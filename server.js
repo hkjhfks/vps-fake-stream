@@ -84,6 +84,10 @@ app.all('/api/logs', (req, res) => {
     if (!requireAdminApi(req, res)) return;
     return wrapHandler(logsHandler)(req, res);
 });
+app.all('/api/logs/:id', (req, res) => {
+    if (!requireAdminApi(req, res)) return;
+    return wrapHandler(logsHandler.detail)(req, res);
+});
 
 app.use(['/api', '/v1'], (req, res) => {
     res.status(404).json({

@@ -76,7 +76,8 @@ async function loadLogs(showSpinner = false) {
   logsError.value = '';
   try {
     const response = await api.logs.list(100);
-    logs.value = response.logs;
+    // null means 304 Not Modified: the cached rows are still current.
+    if (response) logs.value = response.logs;
   } catch (error) {
     logsError.value = getErrorMessage(error);
   } finally {

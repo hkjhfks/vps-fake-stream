@@ -1,3 +1,9 @@
+/*
+ * Glass surfaces stay visually identical without backdrop-filter: everything
+ * behind them is a smooth, static gradient, so blurring it produced no visible
+ * change while forcing a full re-blur of every panel on each scroll/paint.
+ * Only true overlays (drawer scrim, toasts, popovers) keep their blur.
+ */
 .glass {
   background:
     linear-gradient(148deg, var(--glass-strong) 0%, var(--glass) 54%, var(--glass) 100%);
@@ -6,8 +12,6 @@
     var(--glass-shadow),
     inset 0 1px 0 var(--glass-highlight),
     inset 0 -1px 0 rgba(20, 20, 26, .035);
-  backdrop-filter: blur(var(--blur)) saturate(var(--saturation));
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturation));
 }
 
 [data-variant="graphite"] .glass {
@@ -25,8 +29,6 @@
   background: var(--card);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(20px) saturate(135%);
-  -webkit-backdrop-filter: blur(20px) saturate(135%);
 }
 
 .card-pad { padding: 22px; }
@@ -102,8 +104,6 @@
   background: var(--glass-strong);
   border-color: var(--line);
   box-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow-sm);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
 }
 .btn-secondary:hover { background: var(--card-solid); border-color: var(--line-strong); }
 
@@ -159,6 +159,7 @@
 .pill-mono { font-family: var(--font-mono); font-size: 10px; font-weight: 500; }
 
 .status-dot {
+  position: relative;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -166,14 +167,25 @@
   box-shadow: 0 0 0 3px var(--green-soft);
   flex: none;
 }
-.status-dot.is-live { animation: live-pulse 2.2s var(--ease-soft) infinite; }
+/* The pulse ring was an animated box-shadow (a paint property). A pseudo
+   element driven by transform/opacity looks the same and stays on the
+   compositor. */
+.status-dot.is-live::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--green-soft);
+  animation: live-pulse 2.2s var(--ease-soft) infinite;
+  pointer-events: none;
+}
 .status-dot.gray { background: var(--text-3); box-shadow: 0 0 0 3px var(--fill); }
 .status-dot.orange { background: var(--orange-bright); box-shadow: 0 0 0 3px var(--orange-soft); }
 .status-dot.red { background: var(--red-bright); box-shadow: 0 0 0 3px var(--red-soft); }
 
 @keyframes live-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px var(--green-soft); }
-  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--green-bright) 0%, transparent); }
+  0%, 100% { transform: scale(1); opacity: .85; }
+  50% { transform: scale(1.5); opacity: 0; }
 }
 
 .segmented {

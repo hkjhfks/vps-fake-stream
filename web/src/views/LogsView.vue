@@ -23,6 +23,10 @@ type StatusFilter = 'all' | 'success' | 'error';
 type StreamFilter = 'all' | 'stream' | 'non-stream';
 type RangeFilter = 'all' | '1h' | '24h';
 
+/** Auto refresh cadence and how many rows a background poll asks for. */
+const POLL_INTERVAL_MS = 30_000;
+const POLL_LIMIT = 50;
+
 const route = useRoute();
 const router = useRouter();
 const { showToast } = useToast();
@@ -30,6 +34,7 @@ const { showToast } = useToast();
 const logs = ref<RequestLog[]>([]);
 const loading = ref(true);
 const refreshing = ref(false);
+const exporting = ref(false);
 const error = ref('');
 const limit = ref(200);
 const autoRefresh = ref(true);
@@ -45,16 +50,50 @@ const drawerOpen = ref(false);
 const showRaw = ref(false);
 const confirmOpen = ref(false);
 const clearing = ref(false);
+const selectedDetail = ref<RequestLog | null>(null);
+const detailLoading = ref(false);
+const detailError = ref('');
 let timer: number | null = null;
 let requestInFlight = false;
+let detailSeq = 0;
 
-const filteredLogs = computed(() => {
+const selectedSummary = computed(() => logs.value.find((log) => log.id === selectedId.value) || null);
+const selectedLog = computed<RequestLog | null>(() => (
+  selectedDetail.value && selectedDetail.value.id === selectedId.value
+    ? selectedDetail.value
+    : selectedSummary.value
+));
+
+/**
+ * Lowercased search text per log id. Rebuilding it on every keystroke made the
+ * search box lag on phones once a few hundred rows were loaded.
+ */
+const haystackCache = new Map<string, string>();
+
+function haystackOf(log: RequestLog): string {
+  const cached = haystackCache.get(log.id);
+  if (cached !== undefined) return cached;
+  const value = [
+    log.model,
+    log.id,
+    log.request_id,
+    log.output_preview,
+    log.error?.message,
+    log.upstream_format,
+    log.endpoint,
+  ].join(' ').toLowerCase();
+  if (haystackCache.size > 4000) haystackCache.clear();
+  haystackCache.set(log.id, value);
+  return value;
+}
+
+function filterList(list: RequestLog[]): RequestLog[] {
   const needle = search.value.trim().toLowerCase();
   const model = modelFilter.value;
   const now = Date.now();
   const rangeMs = rangeFilter.value === '1h' ? 3_600_000 : rangeFilter.value === '24h' ? 86_400_000 : 0;
 
-  return logs.value.filter((log) => {
+  return list.filter((log) => {
     const status = Number(log.status_code) || 0;
     if (statusFilter.value === 'success' && !(status >= 200 && status < 300)) return false;
     if (statusFilter.value === 'error' && status >= 200 && status < 300) return false;
@@ -65,21 +104,12 @@ const filteredLogs = computed(() => {
       const time = Date.parse(log.created_at);
       if (Number.isFinite(time) && now - time > rangeMs) return false;
     }
-    if (needle) {
-      const haystack = [
-        log.model,
-        log.id,
-        log.request_id,
-        log.output_text,
-        log.error?.message,
-        log.upstream_format,
-        log.endpoint,
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(needle)) return false;
-    }
+    if (needle && !haystackOf(log).includes(needle)) return false;
     return true;
   });
-});
+}
+
+const filteredLogs = computed(() => filterList(logs.value));
 
 const modelOptions = computed(() => {
   return Array.from(new Set(logs.value.map((log) => log.model).filter(Boolean))) as string[];
@@ -115,7 +145,8 @@ const rangeStart = computed(() => {
   return start;
 });
 const rangeEnd = computed(() => Math.min(filteredLogs.value.length, page.value * pageSize));
-const selectedLog = computed(() => logs.value.find((log) => log.id === selectedId.value) || null);
+
+let needFullReload = false;
 
 function setupTimer() {
   if (timer) window.clearInterval(timer);
@@ -124,7 +155,21 @@ function setupTimer() {
   timer = window.setInterval(() => {
     if (document.hidden || requestInFlight) return;
     refresh(true);
-  }, 5000);
+  }, POLL_INTERVAL_MS);
+}
+
+/**
+ * Merge a small poll window into the rows already on screen instead of
+ * dropping everything the poll did not re-fetch. Returns null when the poll
+ * window is fully new, which means older rows may have been missed.
+ */
+function mergePolledRows(incoming: RequestLog[]): RequestLog[] | null {
+  if (!incoming.length) return logs.value;
+  const incomingIds = new Set(incoming.map((log) => log.id));
+  const hasOverlap = logs.value.some((log) => incomingIds.has(log.id));
+  if (!hasOverlap && incoming.length >= POLL_LIMIT) return null;
+  const older = logs.value.filter((log) => !incomingIds.has(log.id));
+  return [...incoming, ...older].slice(0, Math.max(limit.value, incoming.length));
 }
 
 async function refresh(silent = false) {
@@ -132,9 +177,24 @@ async function refresh(silent = false) {
   requestInFlight = true;
   if (!silent) refreshing.value = true;
   error.value = '';
+  needFullReload = false;
   try {
-    const response = await api.logs.list(limit.value);
-    logs.value = response.logs;
+    const usePollWindow = silent;
+    const response = await api.logs.list(usePollWindow ? POLL_LIMIT : limit.value);
+    // null means 304 Not Modified: nothing changed, keep what we have.
+    if (response) {
+      if (usePollWindow) {
+        const merged = mergePolledRows(response.logs);
+        if (merged === null) {
+          needFullReload = true;
+        } else {
+          logs.value = merged;
+        }
+      } else {
+        logs.value = response.logs;
+      }
+    }
+    // Runs even on 304 so a deep link still opens the drawer.
     openFromQuery();
   } catch (err) {
     error.value = getErrorMessage(err);
@@ -143,18 +203,36 @@ async function refresh(silent = false) {
     refreshing.value = false;
     loading.value = false;
     if (page.value > pageCount.value) page.value = pageCount.value;
+    if (needFullReload) refresh(false);
+  }
+}
+
+async function loadDetail(id: string) {
+  const seq = ++detailSeq;
+  detailLoading.value = true;
+  detailError.value = '';
+  try {
+    const response = await api.logs.detail(id);
+    if (seq !== detailSeq) return;
+    selectedDetail.value = response.log;
+  } catch (err) {
+    if (seq !== detailSeq) return;
+    selectedDetail.value = null;
+    detailError.value = getErrorMessage(err);
+  } finally {
+    if (seq === detailSeq) detailLoading.value = false;
   }
 }
 
 function openFromQuery() {
   const id = route.query.request;
   if (typeof id !== 'string' || !id) return;
-  const found = logs.value.find((log) => log.id === id);
-  if (found) {
-    selectedId.value = id;
-    drawerOpen.value = true;
-    showRaw.value = false;
-  }
+  // A background poll also calls this; only fetch when the target changed.
+  if (selectedId.value === id && drawerOpen.value) return;
+  selectedId.value = id;
+  drawerOpen.value = true;
+  showRaw.value = false;
+  loadDetail(id);
 }
 
 function selectLog(log: RequestLog) {
@@ -162,11 +240,16 @@ function selectLog(log: RequestLog) {
   drawerOpen.value = true;
   showRaw.value = false;
   router.replace({ name: 'logs', query: { ...route.query, request: log.id } });
+  loadDetail(log.id);
 }
 
 function closeDrawer() {
+  detailSeq += 1;
   drawerOpen.value = false;
   selectedId.value = '';
+  selectedDetail.value = null;
+  detailLoading.value = false;
+  detailError.value = '';
   showRaw.value = false;
   const query = { ...route.query };
   delete query.request;
@@ -178,7 +261,10 @@ async function clearLogs() {
   try {
     await api.logs.clear();
     logs.value = [];
+    haystackCache.clear();
+    detailSeq += 1;
     selectedId.value = '';
+    selectedDetail.value = null;
     drawerOpen.value = false;
     confirmOpen.value = false;
     showToast('请求日志已清空', 'success');
@@ -189,14 +275,27 @@ async function clearLogs() {
   }
 }
 
-function exportLogs() {
+async function exportLogs() {
   if (!filteredLogs.value.length) {
     showToast('当前筛选没有可导出的日志', 'info');
     return;
   }
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  downloadText(`fake-stream-logs-${stamp}.json`, JSON.stringify(filteredLogs.value, null, 2));
-  showToast(`已导出 ${filteredLogs.value.length} 条日志`, 'success');
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
+    // List rows no longer carry the output body, so ask for the full records.
+    const response = await api.logs.list(limit.value, true);
+    const fullById = new Map<string, RequestLog>();
+    for (const log of response?.logs || []) fullById.set(log.id, log);
+    const rows = filteredLogs.value.map((log) => fullById.get(log.id) || log);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    downloadText(`fake-stream-logs-${stamp}.json`, JSON.stringify(rows, null, 2));
+    showToast(`已导出 ${rows.length} 条日志`, 'success');
+  } catch (err) {
+    showToast(getErrorMessage(err), 'error');
+  } finally {
+    exporting.value = false;
+  }
 }
 
 async function copyValue(value: string, label = '内容') {
@@ -229,6 +328,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer);
+  detailSeq += 1;
   document.removeEventListener('keydown', onKeydown);
 });
 </script>
@@ -243,9 +343,9 @@ onBeforeUnmount(() => {
       <template #actions>
         <span class="pill" :class="autoRefresh ? 'pill-green' : 'pill-gray'">
           <span class="status-dot" :class="autoRefresh ? 'is-live' : 'gray'" />
-          {{ autoRefresh ? '自动刷新 5s' : '已暂停' }}
+          {{ autoRefresh ? '自动刷新 30s' : '已暂停' }}
         </span>
-        <button type="button" class="btn btn-secondary btn-sm" @click="exportLogs">
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="exporting" @click="exportLogs">
           <AppIcon name="download" :size="13" />
           导出
         </button>
@@ -280,7 +380,7 @@ onBeforeUnmount(() => {
         <div class="filter-search">
           <span class="input-wrap">
             <AppIcon name="search" :size="13" />
-            <input v-model="search" class="input" placeholder="搜索模型、请求 ID 或输出…" aria-label="搜索日志">
+            <input v-model="search" class="input" placeholder="搜索模型、请求 ID 或输出摘要…" aria-label="搜索日志">
           </span>
         </div>
         <div class="segmented" role="group" aria-label="状态筛选">
@@ -463,9 +563,11 @@ onBeforeUnmount(() => {
 
               <section class="drawer-section">
                 <div class="drawer-section-title"><AppIcon name="code" :size="10" /> 输出文本</div>
-                <div v-if="selectedLog.output_text" class="output-box">{{ selectedLog.output_text }}</div>
+                <div v-if="detailLoading" class="output-box is-empty">正在读取输出…</div>
+                <div v-else-if="selectedLog.output_text" class="output-box">{{ selectedLog.output_text }}</div>
+                <div v-else-if="detailError" class="output-box is-empty">{{ detailError }}</div>
                 <div v-else class="output-box is-empty">{{ selectedLog.client_aborted ? '客户端在输出完成前中断了请求。' : '没有记录到输出内容。' }}</div>
-                <div v-if="selectedLog.output_text" class="output-actions">
+                <div v-if="!detailLoading && selectedLog.output_text" class="output-actions">
                   <button type="button" class="copy-link" @click="copyValue(selectedLog.output_text || '', '输出')">
                     <AppIcon name="copy" :size="11" /> 复制输出
                   </button>

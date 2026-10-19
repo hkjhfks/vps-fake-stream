@@ -295,8 +295,12 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 ### Logs
 
-- `GET /api/logs?limit=100`
+- `GET /api/logs?limit=100` —— 列表行：不含输出正文，只带 `output_preview`（前 160 字）与 `output_chars`
+- `GET /api/logs?limit=100&full=1` —— 列表行 + 完整 `output_text`（导出用）
+- `GET /api/logs/:id` —— 单条详情，含完整 `output_text`
 - `DELETE /api/logs`
+
+列表响应带 `ETag` + `Cache-Control: no-cache`，日志没有变化时返回 `304 Not Modified`；控制台每 30 秒轮询一次，轮询只取最新 50 条并与已加载的行合并。
 
 ### Admin Session
 
@@ -416,3 +420,7 @@ Gemini 的 `functionResponse` 必须带函数名。OpenAI 的 `tool` 消息只�
 ### 为什么日志里 `finish_reason` 是 `content_filter`？
 
 Gemini 返回 `SAFETY`、`BLOCKLIST`、`PROHIBITED_CONTENT` 等安全相关 finish reason 时，会映射成 OpenAI 的 `content_filter`。如果 prompt 本身被拦截，响应内容会是空字符串。
+
+---
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
