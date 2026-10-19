@@ -1,4 +1,5 @@
 const { getAdminSettings, setAdminSessionCookie, isAdminPasswordMatch } = require('../lib/admin-auth');
+const loginRateLimit = require('../lib/login-rate-limit');
 
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,16 +24,29 @@ module.exports = async (req, res) => {
         });
     }
 
+    const rate = loginRateLimit.check(req);
+    if (rate.blocked) {
+        res.setHeader('Retry-After', String(rate.retryAfter));
+        return res.status(429).json({
+            error: {
+                message: 'Too many login attempts, please try again later',
+                type: 'too_many_attempts',
+            },
+        });
+    }
+
     const password = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
     if (!password || !isAdminPasswordMatch(password, settings)) {
+        loginRateLimit.recordFailure(req);
         return res.status(401).json({
             error: {
-                message: 'Invalid admin password',
+                message: '密码错误，请重试',
                 type: 'admin_unauthorized',
             },
         });
     }
 
+    loginRateLimit.clear(req);
     setAdminSessionCookie(req, res, settings);
 
     return res.status(200).json({

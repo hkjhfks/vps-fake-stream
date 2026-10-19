@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-variant="frost">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d10" media="(prefers-color-scheme: dark)">
+  <title>FakeStream · 伪流式代理控制台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('fake-stream-theme') || 'system';
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var theme = saved === 'system' ? (dark ? 'dark' : 'light') : saved;
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.variant = theme === 'dark' ? 'graphite' : 'frost';
+        document.documentElement.style.colorScheme = theme;
+      } catch (error) {
+        document.documentElement.dataset.theme = 'light';
+        document.documentElement.dataset.variant = 'frost';
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

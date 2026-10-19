@@ -32,23 +32,36 @@
   - 配置存放在 `config/config.json`
   - 修改后无需重启进程
 - 管理登录：
-  - `ADMIN_PASSWORD` 保护配置页、日志页和管理 API
-  - 登录后使用 HttpOnly Cookie 保持会话
-- 内置页面：
-  - `/` 测试请求
-  - `/admin.html` 管理登录
-  - `/config.html` 配置中心
-  - `/logs.html` 请求日志
+  - `ADMIN_PASSWORD` 保护整个控制台和管理 API（代理接口 `/v1/*` 例外）
+  - 登录后使用 HttpOnly Cookie 保持会话，连续失败会触发登录限流
+- 控制台页面（Vue 3 + Vite，构建产物在 `dist/`）：
+  - `/login` 登录
+  - `/settings` 设置（默认落地页）
+  - `/overview` 概览
+  - `/playground` 调试台
+  - `/logs` 请求日志
+  - 旧地址 `/admin.html`、`/config.html`、`/logs.html` 会 302 到新路由
+  - 支持浅色「雾白」与深色「石墨」两套主题，设置保存在浏览器本地
 - 请求日志：
   - 记录请求元信息、输出内容、token 用量、响应时间
   - 不记录输入文本
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 安装依赖并构建前端
 
 ```bash
 npm install
+npm run build
+```
+
+前端源码在 `web/`，构建产物在 `dist/`。修改前端后需要重新执行 `npm run build`。
+
+开发时可以开两个终端：
+
+```bash
+npm run dev:api   # 后端，默认 3010
+npm run dev       # Vite，默认 5173，并代理 /api 和 /v1 到 3010
 ```
 
 ### 2. 启动服务
@@ -73,10 +86,7 @@ PORT=8080 npm run start
 }
 ```
 
-然后访问：
-
-- `http://你的IP:端口/admin.html`
-- 登录后再进入 `http://你的IP:端口/config.html`
+然后访问 `http://你的IP:端口/`，会先跳到登录页；登录后默认进入设置页。控制台的所有页面都需要登录，但 `/v1/chat/completions` 和 `/v1/models` 仍按自己的 Key 规则工作。
 
 ## 配置文件
 
@@ -105,7 +115,7 @@ PORT=8080 npm run start
 说明：
 
 - 服务每次请求都会按文件 mtime 检查配置是否变化
-- 你可以手动改文件，也可以通过 `/config.html` 保存
+- 你可以手动改文件，也可以通过 `/settings` 保存
 - 如果 `ADMIN_PASSWORD` 为空，管理页和管理 API 会要求先配置密码
 - `CORS_ALLOW_ORIGIN` 可填写 `https://a.example.com, https://b.example.com`，服务会按请求头里的 `Origin` 精确匹配并回显
 
@@ -318,21 +328,25 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 ## 页面说明
 
-### `/`
+### `/login`
 
-测试代理请求，支持非流式和伪流式两种模式，并可一键获取模型列表填充下拉框。
+整站登录页。登录成功后回到 `next` 指定的页面；默认进入 `/settings`。连续输错 5 次密码会锁定 15 分钟。
 
-### `/admin.html`
+### `/settings`
 
-管理登录页。登录成功后跳转到配置页或日志页。
+默认落地页。按「上游连接 / 流式行为 / 访问与安全 / 日志与调试 / 外观 / 原始 JSON」分区编辑 `config/config.json`。表单只提交改动字段；管理员密码修改后会自动退出并提示重新登录。
 
-### `/config.html`
+### `/overview`
 
-可视化编辑 `config/config.json`，保存后后端自动热读取。可以在 `UPSTREAM_FORMAT` 里切换 `openai` / `gemini` / `auto`，切换到 Gemini 时会展开 `GEMINI_*` 配置项。
+服务状态、上游信息、最近请求统计、接入地址与快捷入口。统计基于最近 100 条日志，并明确标注样本范围。
 
-### `/logs.html`
+### `/playground`
 
-查看日志列表、统计信息、响应耗时、token 用量和模型输出。
+选择或手动输入模型，支持流式 / 非流式、temperature、系统提示词、自带 API Key。流式响应会显示首块延迟、总耗时、分块节奏与 Tokens，并支持停止、复制、重新生成和查看原始 SSE 事件。
+
+### `/logs`
+
+请求日志列表、筛选、搜索、分页、详情抽屉、自动刷新与 JSON 导出。详情里可以查看输出、错误、耗时、Tokens 和原始 JSON；输入正文仍然不会落盘。
 
 ## 常见问题
 
@@ -340,9 +354,9 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 不需要。配置文件是热读取的。
 
-### 为什么配置页/日志页会跳到登录页？
+### 为什么所有页面都会跳到登录页？
 
-因为这两个页面和对应 API 受 `ADMIN_PASSWORD` 保护。先去 `/admin.html` 登录。
+因为整个控制台（除了 `/login` 和静态资源）都受 `ADMIN_PASSWORD` 保护。先去 `/login` 登录；代理接口 `/v1/*` 不受这个登录影响。
 
 ### 为什么登录页提示管理员密码未配置？
 
@@ -358,7 +372,7 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 ### 如何切换到 Gemini？
 
-在 `/config.html` 把 `UPSTREAM_FORMAT` 改成 `gemini`，填写 `GEMINI_API_KEY`，然后按需设置 `ALLOW_ENV_API_KEY=true`。或者直接改 `config/config.json`：
+在 `/settings` 把 `UPSTREAM_FORMAT` 改成 `gemini`，填写 `GEMINI_API_KEY`，然后按需设置 `ALLOW_ENV_API_KEY=true`。或者直接改 `config/config.json`：
 
 ```json
 {
