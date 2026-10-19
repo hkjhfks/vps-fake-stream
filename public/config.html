@@ -144,7 +144,8 @@
         }
 
         input,
-        textarea {
+        textarea,
+        select {
             width: 100%;
             border: 1px solid var(--line);
             border-radius: 11px;
@@ -156,8 +157,13 @@
             transition: border-color .2s ease, box-shadow .2s ease;
         }
 
+        select {
+            cursor: pointer;
+        }
+
         input:focus,
-        textarea:focus {
+        textarea:focus,
+        select:focus {
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(29, 111, 71, 0.15);
         }
@@ -249,7 +255,7 @@
         <header class="topbar">
             <div>
                 <h1 class="brand">配置中心</h1>
-                <p class="hint">直接读写 config/config.json，后端请求会自动热读取新配置，无需重启进程。管理页面由 ADMIN_PASSWORD 保护。</p>
+                <p class="hint">直接读写 config/config.json，后端请求会自动热读取新配置，无需重启进程。支持 OpenAI 与 Gemini 两种上游格式。管理页面由 ADMIN_PASSWORD 保护。</p>
             </div>
             <nav class="nav">
                 <a href="/">测试请求</a>
@@ -270,8 +276,39 @@
                     </div>
 
                     <div class="field full">
+                        <label for="UPSTREAM_FORMAT">UPSTREAM_FORMAT（上游接口格式）</label>
+                        <select id="UPSTREAM_FORMAT">
+                            <option value="openai">openai：OpenAI Chat Completions（/v1/chat/completions）</option>
+                            <option value="gemini">gemini：Google Gemini generateContent</option>
+                            <option value="auto">auto：按模型名自动选择（gemini* / gemma* 走 Gemini）</option>
+                        </select>
+                        <div class="meta">
+                            openai 使用 <code>SOURCE_API_URL</code>；gemini 使用 <code>GEMINI_BASE_URL</code>；
+                            auto 会按模型名在两者之间选择，并同时汇总模型列表。
+                        </div>
+                    </div>
+
+                    <div class="field full">
                         <label for="SOURCE_API_URL">SOURCE_API_URL</label>
                         <input type="text" id="SOURCE_API_URL" placeholder="https://api.openai.com">
+                        <div class="meta">OpenAI 兼容上游的根地址；UPSTREAM_FORMAT=gemini 时不使用。</div>
+                    </div>
+
+                    <div class="field full" data-format-scope="gemini">
+                        <label for="GEMINI_API_KEY">GEMINI_API_KEY</label>
+                        <input type="password" id="GEMINI_API_KEY" placeholder="AIza...">
+                        <div class="meta">留空且开启 ALLOW_ENV_API_KEY 时，会回退到 OPENAI_API_KEY。</div>
+                    </div>
+
+                    <div class="field" data-format-scope="gemini">
+                        <label for="GEMINI_BASE_URL">GEMINI_BASE_URL</label>
+                        <input type="text" id="GEMINI_BASE_URL"
+                            placeholder="https://generativelanguage.googleapis.com">
+                    </div>
+
+                    <div class="field" data-format-scope="gemini">
+                        <label for="GEMINI_API_VERSION">GEMINI_API_VERSION</label>
+                        <input type="text" id="GEMINI_API_VERSION" placeholder="v1beta">
                     </div>
 
                     <div class="field full">
@@ -351,7 +388,11 @@
 
         const fields = [
             'OPENAI_API_KEY',
+            'UPSTREAM_FORMAT',
             'SOURCE_API_URL',
+            'GEMINI_API_KEY',
+            'GEMINI_BASE_URL',
+            'GEMINI_API_VERSION',
             'CORS_ALLOW_ORIGIN',
             'ADMIN_PASSWORD',
             'ADMIN_SESSION_TTL_HOURS',
@@ -370,6 +411,16 @@
         const saveBtn = document.getElementById('saveBtn');
         const reloadBtn = document.getElementById('reloadBtn');
         const logoutBtn = document.getElementById('logoutBtn');
+        const formatSelect = document.getElementById('UPSTREAM_FORMAT');
+
+        function updateFormatVisibility() {
+            const format = formatSelect?.value || 'openai';
+            const showGemini = format === 'gemini' || format === 'auto';
+
+            document.querySelectorAll('[data-format-scope="gemini"]').forEach((element) => {
+                element.style.display = showGemini ? '' : 'none';
+            });
+        }
 
         function getLoginUrl(reason = '') {
             const params = new URLSearchParams();
@@ -476,6 +527,7 @@
                 }
 
                 fillForm(data.config || {});
+                updateFormatVisibility();
                 state.configPath = data.config_path || '';
                 state.lastLoadedAt = new Date().toLocaleString('zh-CN');
                 renderMeta();
@@ -510,6 +562,7 @@
                 }
 
                 fillForm(data.config || {});
+                updateFormatVisibility();
                 state.configPath = data.config_path || state.configPath;
                 state.lastLoadedAt = new Date().toLocaleString('zh-CN');
                 renderMeta();
@@ -538,7 +591,9 @@
         document.getElementById('configForm').addEventListener('submit', saveConfig);
         reloadBtn.addEventListener('click', loadConfig);
         logoutBtn.addEventListener('click', logout);
+        formatSelect?.addEventListener('change', updateFormatVisibility);
 
+        updateFormatVisibility();
         loadConfig();
     </script>
 </body>

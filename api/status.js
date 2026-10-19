@@ -32,6 +32,8 @@ module.exports = async (req, res) => {
       config_hot_reload: true,
       request_logging: true,
       admin_auth: true,
+      gemini_format: true,
+      auto_upstream_format: true,
     },
     endpoints: {
       chat: '/api/chat',
@@ -43,7 +45,11 @@ module.exports = async (req, res) => {
     },
     environment: {
       has_api_key: !!configValue.OPENAI_API_KEY,
+      has_gemini_api_key: !!configValue.GEMINI_API_KEY,
+      upstream_format: configValue.UPSTREAM_FORMAT || 'openai',
       source_api_url: configValue.SOURCE_API_URL || 'https://api.openai.com',
+      gemini_base_url: configValue.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com',
+      gemini_api_version: configValue.GEMINI_API_VERSION || 'v1beta',
       allow_env_api_key: !!configValue.ALLOW_ENV_API_KEY,
       admin_auth_enabled: !!configValue.ADMIN_PASSWORD,
       admin_session_ttl_hours: Number(configValue.ADMIN_SESSION_TTL_HOURS || 24),

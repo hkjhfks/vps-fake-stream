@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
 const { appendRequestLog } = require('../lib/request-logs');
 const { applyCors } = require('../lib/cors');
+const gemini = require('../lib/gemini');
 
 // 延迟函数
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -143,6 +144,25 @@ function extractTextFromUpstream(data) {
   return '';
 }
 
+// 解析本次请求应使用的上游格式
+function resolveUpstreamFormat(configValue, model) {
+  const raw = String(configValue.UPSTREAM_FORMAT || 'openai').trim().toLowerCase();
+  if (raw === 'gemini') return 'gemini';
+  if (raw === 'auto') return gemini.isGeminiModel(model) ? 'gemini' : 'openai';
+  return 'openai';
+}
+
+function getIncomingApiKeys(req) {
+  const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization.trim() : '';
+  const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader);
+  const bearer = bearerMatch ? bearerMatch[1].trim() : '';
+
+  const googHeader = req.headers['x-goog-api-key'];
+  const goog = typeof googHeader === 'string' ? googHeader.trim() : '';
+
+  return { bearer, goog };
+}
+
 module.exports = async (req, res) => {
   const configValue = getConfig();
 
@@ -168,7 +188,7 @@ module.exports = async (req, res) => {
   applyCors(req, res, {
     allowOrigin: configValue.CORS_ALLOW_ORIGIN,
     methods: 'POST, OPTIONS',
-    headers: 'Content-Type, Authorization',
+    headers: 'Content-Type, Authorization, x-goog-api-key',
   });
   res.setHeader('X-Request-Id', requestId);
 
@@ -184,15 +204,37 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+
   const {
-    model = 'gpt-4o-mini',
     messages,
     temperature = 0.7,
     max_tokens,
     stream = false,
     ...otherParams
-  } = req.body || {};
+  } = body;
 
+  const requestedModel = typeof body.model === 'string' ? body.model.trim() : '';
+  if (body.model !== undefined && body.model !== null && typeof body.model !== 'string') {
+    writeLog({
+      stream: !!stream,
+      message_count: Array.isArray(messages) ? messages.length : 0,
+      temperature,
+      max_tokens: max_tokens ?? null,
+      status_code: 400,
+      response_ms: Date.now() - startedAt,
+      error: {
+        message: 'model must be a string',
+        type: 'invalid_request_error',
+      },
+    });
+    return res.status(400).json({
+      error: { message: 'model must be a string', type: 'invalid_request_error' },
+    });
+  }
+
+  const upstreamFormat = resolveUpstreamFormat(configValue, requestedModel);
+  const model = requestedModel || (upstreamFormat === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini');
   const messageCount = Array.isArray(messages) ? messages.length : 0;
 
   // 参数校验（不记录message内容避免泄露）
@@ -205,6 +247,7 @@ module.exports = async (req, res) => {
       max_tokens: max_tokens ?? null,
       status_code: 400,
       response_ms: Date.now() - startedAt,
+      upstream_format: upstreamFormat,
       error: {
         message: 'messages is required and must be an array',
         type: 'invalid_request_error',
@@ -219,14 +262,20 @@ module.exports = async (req, res) => {
   }
 
   // 获取配置（支持热读取）
-  const envApiKey = configValue.OPENAI_API_KEY;
+  const openaiEnvKey = configValue.OPENAI_API_KEY || '';
+  const geminiEnvKey = configValue.GEMINI_API_KEY || '';
+  const envApiKey = upstreamFormat === 'gemini'
+    ? (geminiEnvKey || openaiEnvKey)
+    : openaiEnvKey;
   const sourceApiUrl = configValue.SOURCE_API_URL || 'https://api.openai.com';
   const allowEnvKeyFallback = !!configValue.ALLOW_ENV_API_KEY;
   const heartbeatInterval = Number(configValue.HEARTBEAT_INTERVAL_MS ?? 3000);
 
-  // 从请求头获取 API 密钥
-  const authHeader = req.headers.authorization || '';
-  const headerKey = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : '';
+  // 从请求头获取 API 密钥；Gemini 格式优先使用 x-goog-api-key
+  const incomingKeys = getIncomingApiKeys(req);
+  const headerKey = upstreamFormat === 'gemini'
+    ? (incomingKeys.goog || incomingKeys.bearer)
+    : (incomingKeys.bearer || incomingKeys.goog);
   const hasHeaderKey = !!headerKey;
 
   if (!hasHeaderKey && !allowEnvKeyFallback) {
@@ -238,14 +287,25 @@ module.exports = async (req, res) => {
       max_tokens: max_tokens ?? null,
       status_code: 401,
       response_ms: Date.now() - startedAt,
-      error: { message: 'Missing Authorization header', type: 'unauthorized' },
+      upstream_format: upstreamFormat,
+      error: {
+        message: 'Missing API key: use Authorization: Bearer <key> or x-goog-api-key: <key>',
+        type: 'unauthorized',
+      },
     });
     return res.status(401).json({
-      error: { message: 'Missing Authorization header', type: 'unauthorized' },
+      error: {
+        message: 'Missing API key: use Authorization: Bearer <key> or x-goog-api-key: <key>',
+        type: 'unauthorized',
+      },
     });
   }
 
   if (!hasHeaderKey && allowEnvKeyFallback && !envApiKey) {
+    const configError = upstreamFormat === 'gemini'
+      ? 'ALLOW_ENV_API_KEY is enabled but GEMINI_API_KEY (or OPENAI_API_KEY) is empty in config'
+      : 'ALLOW_ENV_API_KEY is enabled but OPENAI_API_KEY is empty in config';
+
     writeLog({
       model,
       stream: !!stream,
@@ -254,14 +314,15 @@ module.exports = async (req, res) => {
       max_tokens: max_tokens ?? null,
       status_code: 500,
       response_ms: Date.now() - startedAt,
+      upstream_format: upstreamFormat,
       error: {
-        message: 'ALLOW_ENV_API_KEY is enabled but OPENAI_API_KEY is empty in config',
+        message: configError,
         type: 'server_error',
       },
     });
     return res.status(500).json({
       error: {
-        message: 'ALLOW_ENV_API_KEY is enabled but OPENAI_API_KEY is empty in config',
+        message: configError,
         type: 'server_error',
       },
     });
@@ -278,11 +339,52 @@ module.exports = async (req, res) => {
   };
   if (max_tokens !== undefined) requestBody.max_tokens = max_tokens;
 
+  // Gemini 格式需要提前转换请求，转换失败直接返回 400，避免已建立 SSE 连接
+  let geminiRequestBody = null;
+  let geminiIncludeThoughts = false;
+  if (upstreamFormat === 'gemini') {
+    try {
+      const converted = gemini.buildGenerateContentRequest(
+        { ...body, temperature: body.temperature !== undefined ? body.temperature : temperature },
+        { model },
+      );
+      geminiRequestBody = converted.request;
+      geminiIncludeThoughts = geminiRequestBody?.generationConfig?.thinkingConfig?.includeThoughts === true;
+
+      if (converted.warnings.length) {
+        log(configValue, 'Gemini request conversion warnings:', converted.warnings.join('; '));
+      }
+    } catch (error) {
+      writeLog({
+        model,
+        stream: !!stream,
+        message_count: messageCount,
+        temperature,
+        max_tokens: max_tokens ?? null,
+        status_code: 400,
+        response_ms: Date.now() - startedAt,
+        upstream_format: upstreamFormat,
+        error: {
+          message: error.message || 'Invalid request for Gemini upstream',
+          type: 'invalid_request_error',
+        },
+      });
+      return res.status(400).json({
+        error: {
+          message: error.message || 'Invalid request for Gemini upstream',
+          type: 'invalid_request_error',
+        },
+      });
+    }
+  }
+
   // 如果客户端需要流式响应，设置SSE响应头并开始心跳
   let heartbeatTimer = null;
   let clientAborted = false;
   let clientCompleted = false;
   let roleSent = false;
+  const sseId = `chatcmpl-${randomUUID()}`;
+  const sseCreated = Math.floor(Date.now() / 1000);
   if (stream) {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -297,9 +399,9 @@ module.exports = async (req, res) => {
     });
     // 立即发送一个 role 块，确保响应体非空，避免 content-length: 0
     const preRoleChunk = {
-      id: `chatcmpl-${Date.now()}`,
+      id: sseId,
       object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
+      created: sseCreated,
       model,
       choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
     };
@@ -322,23 +424,56 @@ module.exports = async (req, res) => {
   };
 
   try {
-    log(configValue, 'Requesting source API', { stream, model });
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${requestApiKey}`,
-    };
+    log(configValue, 'Requesting source API', { stream, model, upstreamFormat });
 
-    Object.assign(headers, getUpstreamExtraHeaders(configValue));
+    let fullContent = '';
+    let usage = { prompt_tokens: null, completion_tokens: null, total_tokens: null };
+    let finishReason = 'stop';
+    let toolCalls = [];
+    let responsePayload = null;
+    let sseModel = model;
 
-    const response = await axios.post(`${sourceApiUrl}/v1/chat/completions`, requestBody, { headers });
+    if (upstreamFormat === 'gemini') {
+      const url = gemini.buildGenerateContentUrl(configValue, model);
+      const headers = gemini.buildHeaders(requestApiKey, getUpstreamExtraHeaders(configValue));
 
-    const usage = extractUsageFromUpstream(response.data);
-    const fullContent = extractTextFromUpstream(response.data);
+      const response = await axios.post(url, geminiRequestBody, { headers });
+      const converted = gemini.convertResponse(response.data, {
+        requestedModel: model,
+        includeThoughts: geminiIncludeThoughts,
+      });
+
+      fullContent = converted.text;
+      usage = converted.usage;
+      finishReason = converted.finishReason;
+      toolCalls = converted.toolCalls;
+      responsePayload = converted.response;
+      sseModel = converted.model;
+
+      if (converted.blockReason) {
+        log(configValue, 'Gemini prompt blocked:', converted.blockReason);
+      }
+    } else {
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${requestApiKey}`,
+      };
+
+      Object.assign(headers, getUpstreamExtraHeaders(configValue));
+
+      const response = await axios.post(`${sourceApiUrl}/v1/chat/completions`, requestBody, { headers });
+
+      fullContent = extractTextFromUpstream(response.data);
+      usage = extractUsageFromUpstream(response.data);
+      finishReason =
+        response.data?.choices?.[0]?.finish_reason ||
+        response.data?.candidates?.[0]?.finishReason?.toLowerCase?.() ||
+        'stop';
+      responsePayload = response.data;
+      sseModel = response.data?.model || model;
+    }
+
     const outputText = truncateOutputText(fullContent, configValue.LOG_MAX_OUTPUT_CHARS);
-    const finishReason =
-      response.data?.choices?.[0]?.finish_reason ||
-      response.data?.candidates?.[0]?.finishReason?.toLowerCase?.() ||
-      'stop';
 
     if (!stream) {
       writeOnce({
@@ -349,28 +484,27 @@ module.exports = async (req, res) => {
         max_tokens: max_tokens ?? null,
         status_code: 200,
         response_ms: Date.now() - startedAt,
+        upstream_format: upstreamFormat,
         usage,
         output_chars: typeof fullContent === 'string' ? fullContent.length : 0,
         output_text: outputText,
         finish_reason: finishReason,
       });
-      return res.status(200).json(response.data);
+      return res.status(200).json(responsePayload);
     }
 
     // 客户端需要流式响应：先停止心跳，再进行伪流式发送
     stopHeartbeat(heartbeatTimer);
     if (clientAborted) return; // 已断开
 
-    const choice0 = response.data?.choices?.[0] || {};
     const contentLen = typeof fullContent === 'string' ? fullContent.length : 0;
     log(configValue, 'upstream content length:', contentLen);
-    const currentFinishReason =
-      choice0?.finish_reason || response.data?.candidates?.[0]?.finishReason?.toLowerCase?.() || 'stop';
+
     const sseBase = {
-      id: `chatcmpl-${Date.now()}`,
+      id: sseId,
       object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model: response.data?.model || model,
+      created: sseCreated,
+      model: sseModel,
     };
 
     // 发送角色块（如果之前未发送）
@@ -397,9 +531,25 @@ module.exports = async (req, res) => {
       await delay(jitter);
     }
 
+    // Gemini 的 tool_calls 在 OpenAI 流式协议里放在 delta.tool_calls
+    if (!clientAborted && Array.isArray(toolCalls) && toolCalls.length) {
+      const deltaToolCalls = toolCalls.map((call, index) => ({
+        index,
+        id: call.id,
+        type: call.type || 'function',
+        function: call.function,
+        ...(call.extra_content ? { extra_content: call.extra_content } : {}),
+      }));
+      const toolChunk = {
+        ...sseBase,
+        choices: [{ index: 0, delta: { tool_calls: deltaToolCalls }, finish_reason: null }],
+      };
+      res.write(formatSSEData(toolChunk));
+    }
+
     // 发送最后一个空块，包含 finish_reason
     if (!clientAborted) {
-      const finalChunk = { ...sseBase, choices: [{ index: 0, delta: {}, finish_reason: currentFinishReason }] };
+      const finalChunk = { ...sseBase, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] };
       res.write(formatSSEData(finalChunk));
       res.write(formatSSEData('[DONE]'));
       clientCompleted = true;
@@ -414,21 +564,39 @@ module.exports = async (req, res) => {
       max_tokens: max_tokens ?? null,
       status_code: clientAborted ? 499 : 200,
       response_ms: Date.now() - startedAt,
+      upstream_format: upstreamFormat,
       usage,
       output_chars: typeof fullContent === 'string' ? fullContent.length : 0,
       output_text: outputText,
-      finish_reason: currentFinishReason,
+      finish_reason: finishReason,
       client_aborted: clientAborted,
     });
   } catch (error) {
     // 错误处理
     const upErr = error?.response?.data || null;
     const statusCode = error?.response?.status || 500;
+
+    log(configValue, 'Upstream error', statusCode, upstreamFormat);
+
+    let errorPayload;
+    let errorMessage;
+    let errorType;
+
+    if (upstreamFormat === 'gemini') {
+      errorPayload = gemini.normalizeError(upErr, statusCode, error.message);
+      errorMessage = errorPayload.error.message;
+      errorType = errorPayload.error.type;
+    } else {
+      errorMessage = upErr?.error?.message || error.message || 'An unexpected error occurred.';
+      errorType = upErr?.error?.type || 'server_error';
+      errorPayload = upErr || {
+        error: { message: 'An unexpected error occurred.', type: 'server_error' },
+      };
+    }
+
     const usage = extractUsageFromUpstream(upErr || {});
     const fullContent = extractTextFromUpstream(upErr || {});
     const outputText = truncateOutputText(fullContent, configValue.LOG_MAX_OUTPUT_CHARS);
-
-    log(configValue, 'Upstream error', statusCode);
 
     writeOnce({
       model,
@@ -438,29 +606,25 @@ module.exports = async (req, res) => {
       max_tokens: max_tokens ?? null,
       status_code: statusCode,
       response_ms: Date.now() - startedAt,
+      upstream_format: upstreamFormat,
       usage,
       output_chars: typeof fullContent === 'string' ? fullContent.length : 0,
       output_text: outputText,
       error: {
-        message: upErr?.error?.message || error.message || 'An unexpected error occurred.',
-        type: upErr?.error?.type || 'server_error',
+        message: errorMessage,
+        type: errorType,
       },
     });
 
     if (stream) {
-      const errorPayload = {
-        error: {
-          message: upErr?.error?.message || error.message || 'An unexpected error occurred.',
-          type: upErr?.error?.type || 'server_error',
-        },
-      };
-      try { res.write(formatSSEData(errorPayload)); } catch (_) { }
+      const streamErrorPayload = upstreamFormat === 'gemini'
+        ? errorPayload
+        : { error: { message: errorMessage, type: errorType } };
+      try { res.write(formatSSEData(streamErrorPayload)); } catch (_) { }
       clientCompleted = true;
       try { res.end(); } catch (_) { }
     } else {
-      res.status(statusCode).json(upErr || {
-        error: { message: 'An unexpected error occurred.', type: 'server_error' },
-      });
+      res.status(statusCode).json(errorPayload);
     }
   } finally {
     stopHeartbeat(heartbeatTimer);
@@ -473,6 +637,7 @@ module.exports = async (req, res) => {
         max_tokens: max_tokens ?? null,
         status_code: 499,
         response_ms: Date.now() - startedAt,
+        upstream_format: upstreamFormat,
         error: {
           message: 'Client aborted connection',
           type: 'client_abort',

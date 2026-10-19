@@ -491,6 +491,7 @@
           <div class="k">接口</div><div>${showText(item.endpoint)}</div>
           <div class="k">方法</div><div>${showText(item.method)}</div>
           <div class="k">模型</div><div>${showText(item.model)}</div>
+          <div class="k">上游格式</div><div>${showText(item.upstream_format || '-')}</div>
           <div class="k">状态</div><div>${item.status_code || '-'}</div>
           <div class="k">流式</div><div>${item.stream ? 'true' : 'false'}</div>
           <div class="k">耗时</div><div>${safeNum(item.response_ms)} ms</div>
