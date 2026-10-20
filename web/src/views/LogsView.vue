@@ -5,7 +5,7 @@ import AppIcon from '@/components/AppIcon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import { api, getErrorMessage } from '@/api/client';
-import type { RequestLog } from '@/api/types';
+import type { LoggedToolCall, RequestLog } from '@/api/types';
 import { useToast } from '@/composables/useToast';
 import {
   copyText,
@@ -63,6 +63,7 @@ const selectedLog = computed<RequestLog | null>(() => (
     ? selectedDetail.value
     : selectedSummary.value
 ));
+const selectedToolCalls = computed<LoggedToolCall[]>(() => selectedLog.value?.tool_calls || []);
 
 /**
  * Lowercased search text per log id. Rebuilding it on every keystroke made the
@@ -110,6 +111,20 @@ function filterList(list: RequestLog[]): RequestLog[] {
 }
 
 const filteredLogs = computed(() => filterList(logs.value));
+
+/** Pretty-print tool arguments; upstream may send non-JSON, so fall back raw. */
+function formatToolArguments(raw?: string): string {
+  if (!raw) return '{}';
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function toolCallsCopyText(calls: LoggedToolCall[]): string {
+  return JSON.stringify(calls, null, 2);
+}
 
 const modelOptions = computed(() => {
   return Array.from(new Set(logs.value.map((log) => log.model).filter(Boolean))) as string[];
@@ -561,7 +576,26 @@ onBeforeUnmount(() => {
                 <div class="error-box">{{ selectedLog.error.message }}</div>
               </section>
 
-              <section class="drawer-section">
+              <section v-if="selectedToolCalls.length" class="drawer-section">
+                <div class="drawer-section-title"><AppIcon name="code" :size="10" /> 工具调用</div>
+                <div class="tool-call-list">
+                  <div v-for="(call, index) in selectedToolCalls" :key="call.id || `tool-${index}`" class="tool-call">
+                    <div class="tool-call-head">
+                      <strong>{{ call.function?.name || 'function' }}</strong>
+                      <span v-if="call.id" class="mono">{{ call.id }}</span>
+                    </div>
+                    <pre class="tool-call-args">{{ formatToolArguments(call.function?.arguments) }}</pre>
+                  </div>
+                </div>
+                <div class="output-actions">
+                  <button type="button" class="copy-link" @click="copyValue(toolCallsCopyText(selectedToolCalls), '工具调用')">
+                    <AppIcon name="copy" :size="11" /> 复制工具调用
+                  </button>
+                  <span class="output-note">参数超过日志上限会被截断</span>
+                </div>
+              </section>
+
+              <section v-if="detailLoading || selectedLog.output_text || !selectedToolCalls.length" class="drawer-section">
                 <div class="drawer-section-title"><AppIcon name="code" :size="10" /> 输出文本</div>
                 <div v-if="detailLoading" class="output-box is-empty">正在读取输出…</div>
                 <div v-else-if="selectedLog.output_text" class="output-box">{{ selectedLog.output_text }}</div>

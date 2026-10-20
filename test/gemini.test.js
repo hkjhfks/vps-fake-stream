@@ -15,6 +15,7 @@ const express = require('express');
 const { before, after, beforeEach, test: testCase } = require('node:test');
 
 const configStore = require('../lib/config-store');
+const { getRecentRequestLogs } = require('../lib/request-logs');
 const gemini = require('../lib/gemini');
 const chatHandler = require('../api/chat');
 const modelsHandler = require('../api/models');
@@ -723,6 +724,122 @@ testCase('Gemini 伪流式 tools：输出 delta.tool_calls 与 finish_reason=too
         },
     }]);
     assert.equal(chunks.at(-1).choices[0].finish_reason, 'tool_calls');
+});
+
+testCase('请求日志：finish_reason=tool_calls 时记录工具调用而不是空输出', async () => {
+    geminiResponder = () => ({
+        status: 200,
+        body: {
+            candidates: [{
+                content: {
+                    role: 'model',
+                    parts: [{
+                        functionCall: { name: 'lookup', args: { q: 'x' }, id: 'call_log' },
+                    }],
+                },
+                finishReason: 'STOP',
+            }],
+        },
+    });
+
+    const response = await postChat({
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', content: 'find' }],
+        stream: true,
+    });
+    const requestId = response.headers.get('x-request-id');
+
+    assert.equal(response.status, 200);
+    await response.text();
+
+    const record = getRecentRequestLogs(20, { full: true })
+        .find((item) => item.request_id === requestId);
+    assert.ok(record);
+    assert.equal(record.finish_reason, 'tool_calls');
+    assert.equal(record.output_text, '');
+    assert.equal(record.output_chars, '{"q":"x"}'.length);
+    assert.equal(record.tool_call_count, 1);
+    assert.deepEqual(record.tool_calls, [{
+        id: 'call_log',
+        type: 'function',
+        function: {
+            name: 'lookup',
+            arguments: '{"q":"x"}',
+        },
+    }]);
+
+    const summary = getRecentRequestLogs(20)
+        .find((item) => item.request_id === requestId);
+    assert.ok(summary);
+    assert.equal(summary.tool_calls, undefined);
+    assert.equal(summary.tool_call_count, 1);
+    assert.equal(summary.has_output, true);
+    assert.match(summary.output_preview, /lookup/);
+});
+
+testCase('OpenAI 上游 tool_calls：伪流式转发与请求日志都保留工具调用', async () => {
+    setConfig({ UPSTREAM_FORMAT: 'openai' });
+
+    openaiResponder = () => ({
+        status: 200,
+        body: {
+            id: 'chatcmpl-openai-tool',
+            object: 'chat.completion',
+            model: 'gpt-4o-mini',
+            choices: [{
+                index: 0,
+                message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                        id: 'call_openai',
+                        type: 'function',
+                        function: { name: 'get_weather', arguments: '{"city":"SH"}' },
+                    }],
+                },
+                finish_reason: 'tool_calls',
+            }],
+            usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        },
+    });
+
+    const response = await postChat({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'weather?' }],
+        stream: true,
+    });
+    const requestId = response.headers.get('x-request-id');
+
+    assert.equal(response.status, 200);
+
+    const events = parseSSEEvents(await response.text());
+    const chunks = events.slice(0, -1).map((event) => JSON.parse(event));
+    const toolChunk = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls);
+
+    assert.ok(toolChunk);
+    assert.deepEqual(toolChunk.choices[0].delta.tool_calls, [{
+        index: 0,
+        id: 'call_openai',
+        type: 'function',
+        function: {
+            name: 'get_weather',
+            arguments: '{"city":"SH"}',
+        },
+    }]);
+    assert.equal(chunks.at(-1).choices[0].finish_reason, 'tool_calls');
+
+    const record = getRecentRequestLogs(20, { full: true })
+        .find((item) => item.request_id === requestId);
+    assert.ok(record);
+    assert.equal(record.finish_reason, 'tool_calls');
+    assert.deepEqual(record.tool_calls, [{
+        id: 'call_openai',
+        type: 'function',
+        function: {
+            name: 'get_weather',
+            arguments: '{"city":"SH"}',
+        },
+    }]);
 });
 
 testCase('Gemini 鉴权：x-goog-api-key 与 Authorization 都会被接受', async () => {

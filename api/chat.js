@@ -108,6 +108,127 @@ function truncateOutputText(text, maxLength) {
   return `${text.slice(0, maxLength)}...[truncated]`;
 }
 
+function stringifyToolCallArguments(args) {
+  if (typeof args === 'string') return args;
+  if (args === undefined || args === null) return '{}';
+  try {
+    return JSON.stringify(args);
+  } catch (_) {
+    return '{}';
+  }
+}
+
+/**
+ * OpenAI 协议里 tool_calls 是模型输出的一部分。不同上游（OpenAI 兼容网关、
+ * Gemini 转换层）形状略有差异，这里统一成 OpenAI 的 tool_calls 结构，供
+ * 伪流式转发与请求日志共用。
+ */
+function normalizeToolCalls(rawToolCalls) {
+  if (!Array.isArray(rawToolCalls)) return [];
+
+  const toolCalls = [];
+  for (const raw of rawToolCalls) {
+    if (!raw || typeof raw !== 'object') continue;
+
+    const fn = raw.function && typeof raw.function === 'object' ? raw.function : null;
+    const name = typeof fn?.name === 'string' ? fn.name.trim() : '';
+    if (!name) continue;
+
+    const call = {
+      id: typeof raw.id === 'string' && raw.id ? raw.id : `call_${randomUUID()}`,
+      type: typeof raw.type === 'string' && raw.type ? raw.type : 'function',
+      function: {
+        name,
+        arguments: stringifyToolCallArguments(fn.arguments),
+      },
+    };
+
+    if (raw.extra_content && typeof raw.extra_content === 'object') {
+      call.extra_content = raw.extra_content;
+    }
+
+    toolCalls.push(call);
+  }
+  return toolCalls;
+}
+
+function extractToolCallsFromUpstream(data) {
+  const message = data?.choices?.[0]?.message;
+  if (!message || typeof message !== 'object') return [];
+
+  if (Array.isArray(message.tool_calls)) {
+    return normalizeToolCalls(message.tool_calls);
+  }
+
+  // 旧版 function_call 字段，统一当作单个 tool_call 处理。
+  if (message.function_call && typeof message.function_call === 'object') {
+    return normalizeToolCalls([{ type: 'function', function: message.function_call }]);
+  }
+
+  return [];
+}
+
+/**
+ * 工具调用的参数同样属于模型输出，但可能非常大。日志里按
+ * LOG_MAX_OUTPUT_CHARS 给每个调用分配额度，避免一条日志把文件撑爆。
+ */
+function truncateToolCallsForLog(toolCalls, maxLength) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return [];
+
+  const limit = Number.isFinite(maxLength) && maxLength > 0 ? Math.floor(maxLength) : Infinity;
+  let remaining = limit;
+
+  return toolCalls.map((call, index) => {
+    const callsLeft = toolCalls.length - index;
+    let args = typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}';
+
+    if (Number.isFinite(remaining)) {
+      const allowance = Math.max(1, Math.floor(remaining / callsLeft));
+      if (args.length > allowance) {
+        args = `${args.slice(0, allowance)}...[truncated]`;
+      }
+      remaining = Math.max(0, remaining - args.length);
+    }
+
+    return {
+      id: call?.id || '',
+      type: call?.type || 'function',
+      function: {
+        name: call?.function?.name || '',
+        arguments: args,
+      },
+    };
+  });
+}
+
+/**
+ * Builds the output-related log fields. finish_reason=tool_calls 时
+ * message.content 为 null，真正的模型输出在 tool_calls 里；只记录
+ * output_text 会得到一条空记录。
+ */
+function buildOutputLog(fullContent, toolCalls, maxLength) {
+  const text = typeof fullContent === 'string' ? fullContent : '';
+  const loggedToolCalls = truncateToolCallsForLog(toolCalls, maxLength);
+  const toolCallChars = Array.isArray(toolCalls)
+    ? toolCalls.reduce((sum, call) => {
+      const args = typeof call?.function?.arguments === 'string' ? call.function.arguments : '';
+      return sum + args.length;
+    }, 0)
+    : 0;
+
+  const fields = {
+    output_chars: text.length + toolCallChars,
+    output_text: truncateOutputText(text, maxLength),
+  };
+
+  if (loggedToolCalls.length) {
+    fields.tool_calls = loggedToolCalls;
+    fields.tool_call_count = loggedToolCalls.length;
+  }
+
+  return fields;
+}
+
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.trim()) {
@@ -446,7 +567,7 @@ module.exports = async (req, res) => {
       fullContent = converted.text;
       usage = converted.usage;
       finishReason = converted.finishReason;
-      toolCalls = converted.toolCalls;
+      toolCalls = normalizeToolCalls(converted.toolCalls);
       responsePayload = converted.response;
       sseModel = converted.model;
 
@@ -469,11 +590,16 @@ module.exports = async (req, res) => {
         response.data?.choices?.[0]?.finish_reason ||
         response.data?.candidates?.[0]?.finishReason?.toLowerCase?.() ||
         'stop';
+      toolCalls = extractToolCallsFromUpstream(response.data);
       responsePayload = response.data;
       sseModel = response.data?.model || model;
     }
 
-    const outputText = truncateOutputText(fullContent, configValue.LOG_MAX_OUTPUT_CHARS);
+    const outputFields = buildOutputLog(
+      fullContent,
+      toolCalls,
+      configValue.LOG_MAX_OUTPUT_CHARS,
+    );
 
     if (!stream) {
       writeOnce({
@@ -486,8 +612,7 @@ module.exports = async (req, res) => {
         response_ms: Date.now() - startedAt,
         upstream_format: upstreamFormat,
         usage,
-        output_chars: typeof fullContent === 'string' ? fullContent.length : 0,
-        output_text: outputText,
+        ...outputFields,
         finish_reason: finishReason,
       });
       return res.status(200).json(responsePayload);
@@ -566,8 +691,7 @@ module.exports = async (req, res) => {
       response_ms: Date.now() - startedAt,
       upstream_format: upstreamFormat,
       usage,
-      output_chars: typeof fullContent === 'string' ? fullContent.length : 0,
-      output_text: outputText,
+      ...outputFields,
       finish_reason: finishReason,
       client_aborted: clientAborted,
     });

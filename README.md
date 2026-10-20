@@ -295,9 +295,9 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 ### Logs
 
-- `GET /api/logs?limit=100` —— 列表行：不含输出正文，只带 `output_preview`（前 160 字）与 `output_chars`
-- `GET /api/logs?limit=100&full=1` —— 列表行 + 完整 `output_text`（导出用）
-- `GET /api/logs/:id` —— 单条详情，含完整 `output_text`
+- `GET /api/logs?limit=100` —— 列表行：不含输出正文与工具调用参数，只带 `output_preview`（前 160 字）、`output_chars` 与 `tool_call_count`
+- `GET /api/logs?limit=100&full=1` —— 列表行 + 完整 `output_text` 和 `tool_calls`（导出用）
+- `GET /api/logs/:id` —— 单条详情，含完整 `output_text` 和 `tool_calls`
 - `DELETE /api/logs`
 
 列表响应带 `ETag` + `Cache-Control: no-cache`，日志没有变化时返回 `304 Not Modified`；控制台每 30 秒轮询一次，轮询只取最新 50 条并与已加载的行合并。
@@ -323,12 +323,15 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 - `usage.completion_tokens`
 - `usage.total_tokens`
 - `output_text`
+- `tool_calls` / `tool_call_count`（模型返回工具调用时；`finish_reason=tool_calls` 的模型输出通常都在这里）
 - `finish_reason`
 - 错误信息（如果失败）
 
 不会记录：
 
 - 输入消息正文
+
+> `tool_calls[].function.arguments` 与 `output_text` 共用 `LOG_MAX_OUTPUT_CHARS` 上限，超出部分会被截断。
 
 ## 页面说明
 
@@ -420,6 +423,10 @@ Gemini 的 `functionResponse` 必须带函数名。OpenAI 的 `tool` 消息只�
 ### 为什么日志里 `finish_reason` 是 `content_filter`？
 
 Gemini 返回 `SAFETY`、`BLOCKLIST`、`PROHIBITED_CONTENT` 等安全相关 finish reason 时，会映射成 OpenAI 的 `content_filter`。如果 prompt 本身被拦截，响应内容会是空字符串。
+
+### 为什么 `finish_reason` 是 `tool_calls` 时 `output_text` 是空的？
+
+OpenAI 协议里工具调用响应的 `message.content` 为 `null`，模型输出放在 `message.tool_calls`，所以 `output_text` 为空是正常的。服务会把工具调用记录到日志的 `tool_calls` 字段（ID、函数名、参数），控制台详情页也会单独展示「工具调用」，不再显示“没有记录到输出内容”。
 
 ---
 

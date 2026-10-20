@@ -72,6 +72,15 @@ export interface TokenUsage {
   total_tokens: number | null;
 }
 
+export interface LoggedToolCall {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
 export interface RequestLog {
   id: string;
   request_id?: string;
@@ -92,7 +101,11 @@ export interface RequestLog {
   /** Only present on the detail endpoint (`/api/logs/:id`) and `?full=1`. */
   output_text?: string;
   output_chars?: number;
-  /** First 160 characters of the output; present on list rows. */
+  /** Tool calls returned by the model; also detail/full only. */
+  tool_calls?: LoggedToolCall[];
+  /** Number of tool calls, available on list rows. */
+  tool_call_count?: number;
+  /** First 160 characters of the output (text or tool call preview); list rows. */
   output_preview?: string;
   has_output?: boolean;
   finish_reason?: string | null;

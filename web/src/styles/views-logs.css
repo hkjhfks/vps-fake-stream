@@ -271,6 +271,49 @@
 .output-actions .copy-link { font-size: 9px; }
 .output-note { margin-top: 7px; color: var(--text-3); font-size: 8.5px; }
 
+.tool-call-list { display: grid; gap: 7px; }
+.tool-call {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  overflow: hidden;
+}
+.tool-call-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.tool-call-head strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.tool-call-head span {
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-call-args {
+  margin: 0;
+  padding: 9px 10px;
+  max-height: 150px;
+  overflow: auto;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .error-box {
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
