@@ -377,6 +377,16 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 服务会先请求上游的非流式结果（OpenAI 是 `/v1/chat/completions`，Gemini 是 `:generateContent`），再把完整输出拆成多个 SSE chunk，按时间间隔逐段返回给客户端，同时发送 heartbeat，并在最后输出 `[DONE]`。
 
+### 偶尔出现 500 / `socket hang up` 是什么原因？
+
+这是 Node 19+ 的连接池默认值与 follow-redirects 的监听器泄漏叠加导致的：
+
+- `http.globalAgent` 默认 `keepAlive: true` + `timeout: 5000`；
+- axios 依赖的 follow-redirects 1.x 在请求设置过 `timeout` 后，会留下一个 `socket.on('timeout', socket.destroy)` 监听器，请求结束也不移除；
+- 例如 `/api/models` 的 20s 上游请求结束后，连接回到全局池并被重置为 5s 超时；紧接着复用该连接的长请求会在第 5 秒被残留监听器销毁，客户端看到的就是 `socket hang up`。
+
+服务现在为所有上游请求使用独立的、禁用 keep-alive 的 agent（`lib/upstream-http.js`），每个请求使用新连接，并显式设置超时；聊天请求遇到 `ECONNRESET` / `socket hang up` 还会在新连接上自动重试一次。聊天上游的显式超时是 10 分钟。
+
 ### 如何切换到 Gemini？
 
 在 `/settings` 把 `UPSTREAM_FORMAT` 改成 `gemini`，填写 `GEMINI_API_KEY`，然后按需设置 `ALLOW_ENV_API_KEY=true`。或者直接改 `config/config.json`：

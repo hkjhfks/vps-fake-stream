@@ -2,6 +2,10 @@ const axios = require('axios');
 const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
 const { applyCors } = require('../lib/cors');
 const gemini = require('../lib/gemini');
+const {
+  upstreamAgentOptions,
+  UPSTREAM_MODEL_LIST_TIMEOUT_MS,
+} = require('../lib/upstream-http');
 
 function parseBooleanFlag(value) {
   if (typeof value === 'boolean') return value;
@@ -137,7 +141,13 @@ async function fetchOpenAIModels(configValue, apiKey) {
   const headers = { Authorization: `Bearer ${apiKey}` };
   Object.assign(headers, getUpstreamExtraHeaders(configValue));
 
-  const response = await axios.get(`${sourceApiUrl}/v1/models`, { headers });
+  const response = await axios.get(
+    `${sourceApiUrl}/v1/models`,
+    upstreamAgentOptions({
+      headers,
+      timeout: UPSTREAM_MODEL_LIST_TIMEOUT_MS,
+    }),
+  );
   return response.data;
 }
 

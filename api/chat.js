@@ -4,6 +4,11 @@ const { getConfig, getUpstreamExtraHeaders } = require('../lib/config-store');
 const { appendRequestLog } = require('../lib/request-logs');
 const { applyCors } = require('../lib/cors');
 const gemini = require('../lib/gemini');
+const {
+  upstreamAgentOptions,
+  isRetryableNetworkError,
+  UPSTREAM_CHAT_TIMEOUT_MS,
+} = require('../lib/upstream-http');
 
 // 延迟函数
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -547,6 +552,33 @@ module.exports = async (req, res) => {
   try {
     log(configValue, 'Requesting source API', { stream, model, upstreamFormat });
 
+    // A reused keep-alive socket can be reset before an upstream response is
+    // received. Retry once on a fresh connection; the role chunk already sent
+    // to the client is harmless, so the retry can still produce the content.
+    const postUpstream = async (url, requestPayload, headers) => {
+      const maxAttempts = 2;
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          return await axios.post(url, requestPayload, upstreamAgentOptions({
+            headers,
+            timeout: UPSTREAM_CHAT_TIMEOUT_MS,
+          }));
+        } catch (error) {
+          const retry = attempt < maxAttempts
+            && !clientAborted
+            && isRetryableNetworkError(error);
+          if (!retry) throw error;
+          log(configValue, 'Upstream network error, retrying', {
+            attempt,
+            code: error.code,
+            message: error.message,
+          });
+          await delay(500);
+          if (clientAborted) throw error;
+        }
+      }
+    };
+
     let fullContent = '';
     let usage = { prompt_tokens: null, completion_tokens: null, total_tokens: null };
     let finishReason = 'stop';
@@ -558,7 +590,7 @@ module.exports = async (req, res) => {
       const url = gemini.buildGenerateContentUrl(configValue, model);
       const headers = gemini.buildHeaders(requestApiKey, getUpstreamExtraHeaders(configValue));
 
-      const response = await axios.post(url, geminiRequestBody, { headers });
+      const response = await postUpstream(url, geminiRequestBody, headers);
       const converted = gemini.convertResponse(response.data, {
         requestedModel: model,
         includeThoughts: geminiIncludeThoughts,
@@ -582,7 +614,7 @@ module.exports = async (req, res) => {
 
       Object.assign(headers, getUpstreamExtraHeaders(configValue));
 
-      const response = await axios.post(`${sourceApiUrl}/v1/chat/completions`, requestBody, { headers });
+      const response = await postUpstream(`${sourceApiUrl}/v1/chat/completions`, requestBody, headers);
 
       fullContent = extractTextFromUpstream(response.data);
       usage = extractUsageFromUpstream(response.data);
