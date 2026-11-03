@@ -318,7 +318,8 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 - 请求 ID、时间、来源 IP、User-Agent
 - 接口路径、HTTP 方法、模型名
-- 上游真实返回的模型名（`upstream_model`：Gemini 取响应的 `modelVersion`，OpenAI 取响应的 `model`；上游没返回时为空）
+- 上游响应里的模型名（`upstream_model`：Gemini 取响应的 `modelVersion`，OpenAI 取响应的 `model`）。注意：走 playground2api 时，这一层拿不到 Google 的真实模型，`modelVersion` 由 aistudio-api 回显请求里的 `model`，所以该字段通常等于 `model`
+- 上游响应 ID（`upstream_response_id`：Gemini 取 `responseId`，OpenAI 取响应 `id`，便于对账/排查）
 - 实际使用的上游格式（`upstream_format`）
 - 是否流式、状态码、响应耗时
 - `message_count`

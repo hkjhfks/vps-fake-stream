@@ -90,8 +90,13 @@ export interface RequestLog {
   endpoint?: string;
   method?: string;
   model?: string;
-  /** Model name actually returned by the upstream (Gemini modelVersion / OpenAI response.model). */
+  /**
+   * Model name carried by the upstream response (Gemini modelVersion / OpenAI response.model).
+   * Note: playground2api echoes the requested model here, so it usually equals `model`.
+   */
   upstream_model?: string | null;
+  /** Upstream correlation id (Gemini responseId / OpenAI response id), useful for tracing. */
+  upstream_response_id?: string | null;
   upstream_format?: string;
   stream?: boolean;
   status_code?: number;

@@ -552,6 +552,7 @@ onBeforeUnmount(() => {
                 <div class="drawer-grid">
                   <div class="drawer-cell"><span>模型</span><strong>{{ selectedLog.model || '—' }}</strong></div>
                   <div class="drawer-cell"><span>上游模型</span><strong>{{ selectedLog.upstream_model || '—' }}</strong></div>
+                  <div v-if="selectedLog.upstream_response_id" class="drawer-cell"><span>上游响应 ID</span><strong class="cell-mono" style="font-size:11px;word-break:break-all">{{ selectedLog.upstream_response_id }}</strong></div>
                   <div class="drawer-cell"><span>上游</span><strong>{{ selectedLog.upstream_format ? sourceLabel(selectedLog.upstream_format) : '—' }}</strong></div>
                   <div class="drawer-cell"><span>流式</span><strong>{{ selectedLog.stream ? '是' : '否' }}</strong></div>
                   <div class="drawer-cell"><span>响应耗时</span><strong>{{ formatLatency(selectedLog.response_ms) }}</strong></div>
