@@ -494,7 +494,10 @@ onBeforeUnmount(() => {
                   @click="selectLog(log)"
                 >
                   <td><span class="cell-strong mono" :title="formatDateTime(log.created_at)">{{ formatTime(log.created_at) }}</span></td>
-                  <td><span class="cell-strong">{{ log.model || '未知模型' }}</span><span v-if="log.upstream_format" class="cell-mono" style="margin-left:6px">{{ sourceLabel(log.upstream_format) }}</span></td>
+                  <td>
+                    <span class="cell-strong">{{ log.model || '未知模型' }}</span><span v-if="log.upstream_format" class="cell-mono" style="margin-left:6px">{{ sourceLabel(log.upstream_format) }}</span>
+                    <div v-if="log.upstream_model && log.upstream_model !== log.model" class="cell-mono" style="opacity:.62;font-size:11px;margin-top:1px" :title="log.upstream_model">↳ {{ log.upstream_model }}</div>
+                  </td>
                   <td><span class="status-code" :class="statusKind(log.status_code)">{{ log.status_code || '—' }}</span></td>
                   <td class="hide-sm">
                     <span class="stream-flag" :class="{ on: log.stream }">
@@ -548,6 +551,7 @@ onBeforeUnmount(() => {
                 <div class="drawer-section-title"><AppIcon name="activity" :size="10" /> 概览</div>
                 <div class="drawer-grid">
                   <div class="drawer-cell"><span>模型</span><strong>{{ selectedLog.model || '—' }}</strong></div>
+                  <div class="drawer-cell"><span>上游模型</span><strong>{{ selectedLog.upstream_model || '—' }}</strong></div>
                   <div class="drawer-cell"><span>上游</span><strong>{{ selectedLog.upstream_format ? sourceLabel(selectedLog.upstream_format) : '—' }}</strong></div>
                   <div class="drawer-cell"><span>流式</span><strong>{{ selectedLog.stream ? '是' : '否' }}</strong></div>
                   <div class="drawer-cell"><span>响应耗时</span><strong>{{ formatLatency(selectedLog.response_ms) }}</strong></div>

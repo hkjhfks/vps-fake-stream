@@ -594,6 +594,9 @@ module.exports = async (req, res) => {
     let toolCalls = [];
     let responsePayload = null;
     let sseModel = model;
+    // 上游真实返回的模型名（Gemini: modelVersion；OpenAI: response.model），
+    // 与请求里的 model 分开记录，便于确认实际落到了哪个模型。
+    let upstreamModel = '';
 
     if (upstreamFormat === 'gemini') {
       const url = gemini.buildGenerateContentUrl(configValue, model);
@@ -611,6 +614,7 @@ module.exports = async (req, res) => {
       toolCalls = normalizeToolCalls(converted.toolCalls);
       responsePayload = converted.response;
       sseModel = converted.model;
+      upstreamModel = converted.upstreamModel || '';
 
       if (converted.blockReason) {
         log(configValue, 'Gemini prompt blocked:', converted.blockReason);
@@ -634,6 +638,7 @@ module.exports = async (req, res) => {
       toolCalls = extractToolCallsFromUpstream(response.data);
       responsePayload = response.data;
       sseModel = response.data?.model || model;
+      upstreamModel = typeof response.data?.model === 'string' ? response.data.model : '';
     }
 
     const outputFields = buildOutputLog(
@@ -652,6 +657,7 @@ module.exports = async (req, res) => {
         status_code: 200,
         response_ms: Date.now() - startedAt,
         upstream_format: upstreamFormat,
+        upstream_model: upstreamModel || null,
         usage,
         ...outputFields,
         finish_reason: finishReason,
@@ -731,6 +737,7 @@ module.exports = async (req, res) => {
       status_code: clientAborted ? 499 : 200,
       response_ms: Date.now() - startedAt,
       upstream_format: upstreamFormat,
+      upstream_model: upstreamModel || null,
       usage,
       ...outputFields,
       finish_reason: finishReason,

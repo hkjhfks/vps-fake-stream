@@ -90,6 +90,8 @@ export interface RequestLog {
   endpoint?: string;
   method?: string;
   model?: string;
+  /** Model name actually returned by the upstream (Gemini modelVersion / OpenAI response.model). */
+  upstream_model?: string | null;
   upstream_format?: string;
   stream?: boolean;
   status_code?: number;

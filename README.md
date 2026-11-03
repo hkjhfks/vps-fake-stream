@@ -318,6 +318,7 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 
 - 请求 ID、时间、来源 IP、User-Agent
 - 接口路径、HTTP 方法、模型名
+- 上游真实返回的模型名（`upstream_model`：Gemini 取响应的 `modelVersion`，OpenAI 取响应的 `model`；上游没返回时为空）
 - 实际使用的上游格式（`upstream_format`）
 - 是否流式、状态码、响应耗时
 - `message_count`
