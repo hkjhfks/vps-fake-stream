@@ -480,6 +480,15 @@ module.exports = async (req, res) => {
       if (converted.warnings.length) {
         log(configValue, 'Gemini request conversion warnings:', converted.warnings.join('; '));
       }
+
+      // 客户端没带 thoughtSignature、由本服务补占位符时，始终留下一条可见日志，
+      // 避免“请求被悄悄改写”而无法追溯。
+      if (converted.dummySignatureCount > 0) {
+        console.warn(
+          `[proxy] 为 ${converted.dummySignatureCount} 个历史 functionCall 补齐 ${gemini.DUMMY_THOUGHT_SIGNATURE}`
+          + `（model=${model}，客户端未提供签名）`,
+        );
+      }
     } catch (error) {
       writeLog({
         model,

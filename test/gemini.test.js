@@ -434,6 +434,138 @@ testCase('Gemini tools：函数声明、工具历史与 tool_calls 响应', asyn
     });
 });
 
+testCase('Gemini tools：驼峰 extra_content 与扁平 signature 也能识别', async () => {
+    setConfig({ UPSTREAM_FORMAT: 'gemini' });
+
+    const tool = {
+        type: 'function',
+        function: {
+            name: 'get_weather',
+            parameters: { type: 'object', properties: { city: { type: 'string' } } },
+        },
+    };
+
+    const camelResponse = await postChat({
+        model: 'gemini-2.5-flash',
+        messages: [
+            { role: 'user', content: 'weather?' },
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'get_weather', arguments: '{"city":"SH"}' },
+                    extra_content: { google: { thoughtSignature: 'sig-camel' } },
+                }],
+            },
+            { role: 'tool', tool_call_id: 'call_1', content: '{"temp":20}' },
+            { role: 'user', content: 'thanks' },
+        ],
+        tools: [tool],
+    });
+    assert.equal(camelResponse.status, 200);
+
+    const camelPart = geminiRequests[0].body.contents
+        .flatMap((content) => content.parts)
+        .find((part) => part.functionCall);
+    assert.equal(camelPart.thoughtSignature, 'sig-camel');
+
+    geminiRequests.length = 0;
+
+    const flatResponse = await postChat({
+        model: 'gemini-2.5-flash',
+        messages: [
+            { role: 'user', content: 'weather?' },
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'get_weather', arguments: '{"city":"SH"}' },
+                    signature: 'sig-flat',
+                }],
+            },
+            { role: 'tool', tool_call_id: 'call_1', content: '{"temp":20}' },
+            { role: 'user', content: 'thanks' },
+        ],
+        tools: [tool],
+    });
+    assert.equal(flatResponse.status, 200);
+
+    const flatPart = geminiRequests[0].body.contents
+        .flatMap((content) => content.parts)
+        .find((part) => part.functionCall);
+    assert.equal(flatPart.thoughtSignature, 'sig-flat');
+});
+
+testCase('Gemini 3：历史 functionCall 缺签名时补占位符，2.5 不补', async () => {
+    setConfig({ UPSTREAM_FORMAT: 'gemini' });
+
+    const buildBody = (model) => ({
+        model,
+        messages: [
+            { role: 'user', content: 'go' },
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: 'c1',
+                    type: 'function',
+                    function: { name: 'soliumbra_reply', arguments: '{"think_nya":"a"}' },
+                }],
+            },
+            { role: 'tool', tool_call_id: 'c1', content: 'ok' },
+            { role: 'user', content: 'more' },
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: 'c2',
+                    type: 'function',
+                    function: { name: 'soliumbra_reply', arguments: '{"think_nya":"b"}' },
+                }],
+            },
+            { role: 'tool', tool_call_id: 'c2', content: 'ok' },
+            { role: 'user', content: 'end' },
+        ],
+        tools: [{
+            type: 'function',
+            function: {
+                name: 'soliumbra_reply',
+                parameters: { type: 'object', properties: { think_nya: { type: 'string' } } },
+            },
+        }],
+    });
+
+    const gemini3Response = await postChat(buildBody('gemini-3.8-flash'));
+    assert.equal(gemini3Response.status, 200);
+
+    const gemini3Calls = geminiRequests[0].body.contents
+        .flatMap((content) => content.parts)
+        .filter((part) => part.functionCall);
+    assert.equal(gemini3Calls.length, 2);
+    assert.deepEqual(
+        gemini3Calls.map((part) => part.thoughtSignature),
+        [gemini.DUMMY_THOUGHT_SIGNATURE, gemini.DUMMY_THOUGHT_SIGNATURE],
+    );
+
+    geminiRequests.length = 0;
+
+    const gemini25Response = await postChat(buildBody('gemini-2.5-flash'));
+    assert.equal(gemini25Response.status, 200);
+
+    const gemini25Calls = geminiRequests[0].body.contents
+        .flatMap((content) => content.parts)
+        .filter((part) => part.functionCall);
+    assert.equal(gemini25Calls.length, 2);
+    assert.deepEqual(
+        gemini25Calls.map((part) => part.thoughtSignature),
+        [undefined, undefined],
+    );
+});
+
 testCase('auto 模式：按模型名分流到 Gemini 与 OpenAI，且 OpenAI 响应保持原样', async () => {
     setConfig({ UPSTREAM_FORMAT: 'auto' });
 

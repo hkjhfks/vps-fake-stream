@@ -224,7 +224,9 @@ Gemini 响应会转换成 OpenAI 形状：
 - 非流式请求如果上游返回多个 candidate，会全部转成 `choices`；伪流式只发送第一个 candidate。
 - 函数名必须符合 Gemini 命名要求（字母、数字、`_`、`.`、`:`、`-`，最长 64 字符），否则请求会直接返回 400。
 - 默认按官方 Gemini 的 `x-goog-api-key` 发送 Key。自定义 Gemini 兼容网关如果只接受 `Authorization: Bearer`，可以在 `UPSTREAM_EXTRA_HEADERS_JSON` 里追加静态 `Authorization` 头；不要对官方 `generativelanguage.googleapis.com` 同时带 `Authorization`，否则 Google 会把它当成 OAuth 凭证并返回 401。
-- Gemini 3 的工具调用会返回 `thoughtSignature`。本服务把它放在 `message.tool_calls[].extra_content.google.thought_signature`（流式在 `delta.tool_calls[].extra_content`）。多轮工具调用时必须把这个字段原样带回，否则 Gemini 3 可能返回 400 `Function call is missing a thought_signature`。如果你的客户端会丢弃未知字段，需要自行把它存进会话状态再放回 `tool_calls`；如果历史来自其它模型、确实没有签名，可以显式填 `skip_thought_signature_validator` 跳过校验。
+- Gemini 3 的工具调用会返回 `thoughtSignature`。本服务把它放在 `message.tool_calls[].extra_content.google.thought_signature`（流式在 `delta.tool_calls[].extra_content`）。多轮工具调用时必须把这个字段原样带回，否则 Gemini 3 可能返回 400 `Function call is missing a thought_signature`。
+  - 回传时下列写法都会被识别：`extra_content.google.thought_signature`（官方 OpenAI 兼容格式）、`extra_content.google.thoughtSignature`（驼峰）、`extra_content.thought_signature`、`tool_calls[].signature`（SillyTavern SPreset 预设的写法），以及 `tool_calls[].thought_signature` / `function.thought_signature`。
+  - 历史里的 `functionCall` 完全没带签名时（例如客户端伪造的 few-shot、或从其它模型迁移来的历史），对 Gemini 3 及以上模型（模型名 `gemini-<主版本>=3+`）本服务会自动补官方占位符 `skip_thought_signature_validator`，并在转换警告里记一条，避免上游 400。Gemini 2.5 及更早模型不补。
 - Gemini 的 `responseSchema` 是 OpenAPI Schema 子集；本服务会做 JSON Schema → Gemini Schema 转换，`additionalProperties`、`$defs` 等不支持的字段会被丢弃或内联。
 
 ## API
